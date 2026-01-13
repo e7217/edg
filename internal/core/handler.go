@@ -14,12 +14,14 @@ type DataHandler struct {
 	mu    sync.Mutex
 	data  []AssetData // in-memory storage (PoC)
 	store *Store      // for auto-registration
+	nc    *nats.Conn  // for publishing validated data
 }
 
-func NewDataHandler(store *Store) *DataHandler {
+func NewDataHandler(nc *nats.Conn, store *Store) *DataHandler {
 	return &DataHandler{
 		data:  make([]AssetData, 0),
 		store: store,
+		nc:    nc,
 	}
 }
 
@@ -48,6 +50,13 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 	h.mu.Lock()
 	h.data = append(h.data, data)
 	h.mu.Unlock()
+
+	// Publish validated data to NATS for Telegraf consumption
+	if h.nc != nil {
+		if err := h.nc.Publish("platform.data.validated", msg.Data); err != nil {
+			log.Printf("[Core] Failed to publish validated data: %v", err)
+		}
+	}
 
 	// Log output
 	log.Printf("[Core] Asset: %s, Tags: %d", data.AssetID, len(data.Values))
