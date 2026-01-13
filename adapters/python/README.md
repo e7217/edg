@@ -1,6 +1,6 @@
-# Onto SDK
+# EDG SDK
 
-Python SDK for Onto Platform - Adapter Development Kit
+Python SDK for EDG Platform - Adapter Development Kit
 
 ## Installation
 

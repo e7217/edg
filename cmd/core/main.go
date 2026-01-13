@@ -34,7 +34,7 @@ func main() {
 	}
 
 	log.Println("=================================")
-	log.Println("  Onto Platform Core Started")
+	log.Println("  EDG Platform Core Started")
 	log.Println("  NATS: nats://localhost:4222")
 	log.Println("  Monitor: http://localhost:8222")
 	log.Println("=================================")
@@ -61,7 +61,7 @@ func main() {
 	log.Printf("[Core] Loaded %d templates", loader.Count())
 
 	// 6. Create handlers and subscribe
-	dataHandler := core.NewDataHandler(store)
+	dataHandler := core.NewDataHandler(nc, store)
 	metaHandler := core.NewMetaHandler(store, loader)
 
 	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)

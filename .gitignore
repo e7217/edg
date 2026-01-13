@@ -39,5 +39,15 @@ __pycache__/
 .venv/
 venv/
 
-## edg ##
+### edg ###
 metadata.db
+edg-core
+data/
+tmp/
+
+### telegraf ###
+telegraf*/
+
+### victoriametrics ###
+victoria-metrics-data/
+victoria-metrics*

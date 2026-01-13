@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            telegraf_suffix: linux_amd64
+          - goos: linux
+            goarch: arm64
+            telegraf_suffix: linux_arm64
+          - goos: darwin
+            goarch: amd64
+            telegraf_suffix: darwin_amd64
+          - goos: windows
+            goarch: amd64
+            telegraf_suffix: windows_amd64
+            ext: .exe
+
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAF_VERSION: "1.29.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build EDG Core
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags="-s -w" -o edg-core${{ matrix.ext }} ./cmd/core
+
+      - name: Download Telegraf
+        run: |
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            wget -q https://dl.influxdata.com/telegraf/releases/telegraf-${{ env.TELEGRAF_VERSION }}_${{ matrix.telegraf_suffix }}.zip
+            unzip -q telegraf-*.zip
+          else
+            wget -q https://dl.influxdata.com/telegraf/releases/telegraf-${{ env.TELEGRAF_VERSION }}_${{ matrix.telegraf_suffix }}.tar.gz
+            tar -xzf telegraf-*.tar.gz
+          fi
+
+      - name: Package Release
+        run: |
+          DIST_DIR="edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p "$DIST_DIR"
+
+          cp edg-core${{ matrix.ext }} "$DIST_DIR/"
+
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            cp telegraf-*/telegraf.exe "$DIST_DIR/"
+          else
+            cp telegraf-*/usr/bin/telegraf "$DIST_DIR/"
+          fi
+
+          cp -r configs "$DIST_DIR/"
+          cp scripts/install.sh "$DIST_DIR/"
+          cp README.md "$DIST_DIR/"
+
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip -r "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$DIST_DIR"
+          else
+            tar -czvf "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$DIST_DIR"
+          fi
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            edg-*.tar.gz
+            edg-*.zip

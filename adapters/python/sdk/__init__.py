@@ -1,4 +1,4 @@
-"""Onto Platform Python SDK - Adapter Development Kit"""
+"""EDG Platform Python SDK - Adapter Development Kit"""
 
 from .models import TagValue, AssetData
 from .adapter import BaseAdapter

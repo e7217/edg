@@ -63,7 +63,7 @@ class VibrationSensorAdapter(BaseAdapter):
 if __name__ == "__main__":
     adapter = VibrationSensorAdapter(
         asset_id="vibration-sensor-001",
-        collect_interval=0.5,  # 500ms interval
+        collect_interval=0.1,  # 100ms interval
         metadata={"location": "motor-1", "protocol": "virtual"},
     )
     asyncio.run(adapter.start())
