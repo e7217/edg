@@ -30,3 +30,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+
+### python ###
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+## edg ##
+metadata.db
