@@ -1,0 +1,124 @@
+<mxfile host="65bd71144e">
+    <diagram name="IoT Framework Architecture" id="iot-framework-arch">
+        <mxGraphModel dx="696" dy="851" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="2" value="" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
+                    <mxGeometry x="90" y="40" width="740" height="600" as="geometry"/>
+                </mxCell>
+                <mxCell id="title" value="경량 IoT 프레임워크 아키텍처" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1" parent="1" vertex="1">
+                    <mxGeometry x="310" y="50" width="300" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer5" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="100" width="460" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="grafana-icon" value="📊" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=24;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="115" width="40" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="grafana-text" value="&lt;b&gt;Grafana&lt;/b&gt;&lt;br&gt;Dashboard &amp; Visualization" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+                    <mxGeometry x="190" y="115" width="200" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer5-label" value="시각화 계층" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontStyle=2;fontColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="120" width="120" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow45" value="" style="endArrow=classic;startArrow=classic;html=1;strokeWidth=2;strokeColor=#666666;" parent="1" source="layer4" target="layer5" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="350" y="170" as="sourcePoint"/>
+                        <mxPoint x="350" y="150" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="layer4" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="210" width="460" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="vm-icon" value="🗄️" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=24;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="225" width="40" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="vm-text" value="&lt;b&gt;VictoriaMetrics&lt;/b&gt;&lt;br&gt;Time-Series Database" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+                    <mxGeometry x="190" y="225" width="200" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer4-label" value="저장 계층" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontStyle=2;fontColor=#82b366;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="230" width="120" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow34" value="" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#666666;" parent="1" source="layer3" target="layer4" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="350" y="260" as="sourcePoint"/>
+                        <mxPoint x="350" y="240" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="layer3" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="320" width="460" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="nats-icon" value="📨" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=24;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="335" width="40" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="nats-text" value="&lt;b&gt;NATS Embedded&lt;/b&gt;&lt;br&gt;Messaging (Go Embedded)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+                    <mxGeometry x="190" y="335" width="200" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer3-label" value="메시징 계층" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontStyle=2;fontColor=#d6b656;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="340" width="120" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow23" value="" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#666666;" parent="1" source="layer2" target="layer3" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="350" y="350" as="sourcePoint"/>
+                        <mxPoint x="350" y="330" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="layer2" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="430" width="460" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="telegraf-icon" value="📥" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=24;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="445" width="40" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="telegraf-text" value="&lt;b&gt;Telegraf + Custom Adapters&lt;/b&gt;&lt;br&gt;Data Collection" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+                    <mxGeometry x="190" y="445" width="200" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer2-label" value="수집 계층" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontStyle=2;fontColor=#d79b00;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="450" width="120" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="arrow12" value="" style="endArrow=classic;html=1;strokeWidth=2;strokeColor=#666666;exitX=0.5;exitY=0;exitDx=0;exitDy=0;" parent="1" source="layer1" target="layer2" edge="1">
+                    <mxGeometry width="50" height="50" relative="1" as="geometry">
+                        <mxPoint x="350" y="440" as="sourcePoint"/>
+                        <mxPoint x="350" y="420" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="layer1" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;strokeWidth=2;" parent="1" vertex="1">
+                    <mxGeometry x="120" y="540" width="460" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="field-icon" value="🏭" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=24;" parent="1" vertex="1">
+                    <mxGeometry x="140" y="555" width="40" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="field-text" value="&lt;b&gt;OPC-UA / Modbus / MQTT&lt;/b&gt;&lt;br&gt;Field Devices &amp; Sensors" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;" parent="1" vertex="1">
+                    <mxGeometry x="190" y="555" width="200" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="layer1-label" value="필드 계층" style="text;html=1;strokeColor=none;fillColor=none;align=right;verticalAlign=middle;fontStyle=2;fontColor=#b85450;" parent="1" vertex="1">
+                    <mxGeometry x="450" y="560" width="120" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-box" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;strokeWidth=1;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="100" width="180" height="180" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend-title" value="&lt;b&gt;Tech Stack&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="105" width="180" height="25" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend1" value="• Grafana: 시각화" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="630" y="130" width="160" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend2" value="• VictoriaMetrics: TSDB" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="630" y="150" width="160" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend3" value="• NATS: 메시징 (임베디드)" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="630" y="170" width="160" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend4" value="• Telegraf: 데이터 수집" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="630" y="190" width="160" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend5" value="• OPC-UA/Modbus/MQTT" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=11;" parent="1" vertex="1">
+                    <mxGeometry x="630" y="210" width="160" height="20" as="geometry"/>
+                </mxCell>
+                <mxCell id="legend6" value="&lt;i&gt;Language: Go&lt;/i&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontSize=10;fontColor=#666666;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="240" width="180" height="20" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

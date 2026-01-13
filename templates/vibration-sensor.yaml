@@ -1,0 +1,13 @@
+name: vibration-sensor
+resources:
+  - name: velocity
+    valueType: NUMBER
+    unit: "mm/s"
+  - name: acceleration
+    valueType: NUMBER
+    unit: "g"
+  - name: displacement
+    valueType: NUMBER
+    unit: "μm"
+  - name: alarm
+    valueType: FLAG

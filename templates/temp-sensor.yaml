@@ -1,0 +1,8 @@
+name: temp-sensor
+resources:
+  - name: temperature
+    valueType: NUMBER
+    unit: "°C"
+  - name: humidity
+    valueType: NUMBER
+    unit: "%"
