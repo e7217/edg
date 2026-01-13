@@ -54,9 +54,12 @@ func (s *Store) Close() error {
 
 // CreateAsset creates a new asset
 func (s *Store) CreateAsset(asset *Asset) error {
-	labels, _ := json.Marshal(asset.Labels)
+	labels, err := json.Marshal(asset.Labels)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset labels: %w", err)
+	}
 
-	_, err := s.db.Exec(
+	_, err = s.db.Exec(
 		`INSERT INTO assets (id, name, template_name, labels, created_at) VALUES (?, ?, ?, ?, ?)`,
 		asset.ID, asset.Name, asset.TemplateName, string(labels), asset.CreatedAt,
 	)
