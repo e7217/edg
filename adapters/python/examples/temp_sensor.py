@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""온도 센서 예제 어댑터"""
+"""Temperature sensor example adapter"""
 
 import asyncio
 import random
 import sys
 from pathlib import Path
 
-# SDK 임포트 (개발 환경에서는 상대 경로 사용)
+# SDK import (using relative path in development environment)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sdk import BaseAdapter, TagValue
 
 
 class TempSensorAdapter(BaseAdapter):
-    """가상 온도/습도 센서 어댑터"""
+    """Virtual temperature/humidity sensor adapter"""
 
     async def collect(self) -> list[TagValue]:
-        """온도와 습도 데이터 수집"""
+        """Collect temperature and humidity data"""
         return [
             TagValue(
                 name="temperature",

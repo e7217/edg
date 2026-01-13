@@ -1,4 +1,4 @@
-"""NATS 클라이언트 래퍼"""
+"""NATS client wrapper"""
 
 from __future__ import annotations
 
@@ -16,14 +16,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# NATS 토픽
+# NATS topics
 TOPIC_ASSET_DATA = "platform.data.asset"
 
 
 class NATSClientWrapper:
-    """NATS 클라이언트 래퍼
+    """NATS client wrapper
 
-    연결 관리 및 데이터 발행을 담당합니다.
+    Manages connections and data publishing.
     """
 
     def __init__(
@@ -33,8 +33,8 @@ class NATSClientWrapper:
     ):
         """
         Args:
-            url: NATS 서버 URL
-            name: 클라이언트 이름 (로깅용)
+            url: NATS server URL
+            name: Client name (for logging)
         """
         self.url = url
         self.name = name
@@ -42,11 +42,11 @@ class NATSClientWrapper:
 
     @property
     def is_connected(self) -> bool:
-        """연결 상태 확인"""
+        """Check connection status"""
         return self._nc is not None and self._nc.is_connected
 
     async def connect(self) -> None:
-        """NATS 서버 연결"""
+        """Connect to NATS server"""
         if self.is_connected:
             return
 
@@ -58,44 +58,44 @@ class NATSClientWrapper:
                 disconnected_cb=self._disconnected_callback,
                 reconnected_cb=self._reconnected_callback,
             )
-            logger.info(f"NATS 연결 성공: {self.url}")
+            logger.info(f"NATS connected: {self.url}")
         except Exception as e:
-            raise ConnectionError(f"NATS 연결 실패: {e}") from e
+            raise ConnectionError(f"NATS connection failed: {e}") from e
 
     async def disconnect(self) -> None:
-        """NATS 연결 종료"""
+        """Disconnect from NATS"""
         if self._nc is not None:
             await self._nc.drain()
             self._nc = None
-            logger.info("NATS 연결 종료")
+            logger.info("NATS disconnected")
 
     async def publish_asset_data(self, data: AssetData) -> None:
-        """Asset 데이터 발행
+        """Publish asset data
 
         Args:
-            data: 발행할 AssetData
+            data: AssetData to publish
 
         Raises:
-            PublishError: 발행 실패 시
+            PublishError: When publish fails
         """
         if not self.is_connected:
-            raise PublishError("NATS 연결되지 않음")
+            raise PublishError("NATS not connected")
 
         try:
             payload = json.dumps(data.to_dict()).encode()
             await self._nc.publish(TOPIC_ASSET_DATA, payload)
-            logger.debug(f"데이터 발행: {data.asset_id}, {len(data.values)} tags")
+            logger.debug(f"Published data: {data.asset_id}, {len(data.values)} tags")
         except Exception as e:
-            raise PublishError(f"데이터 발행 실패: {e}") from e
+            raise PublishError(f"Data publish failed: {e}") from e
 
     async def _error_callback(self, e: Exception) -> None:
-        """에러 콜백"""
-        logger.error(f"NATS 에러: {e}")
+        """Error callback"""
+        logger.error(f"NATS error: {e}")
 
     async def _disconnected_callback(self) -> None:
-        """연결 끊김 콜백"""
-        logger.warning("NATS 연결 끊김")
+        """Disconnected callback"""
+        logger.warning("NATS disconnected")
 
     async def _reconnected_callback(self) -> None:
-        """재연결 콜백"""
-        logger.info("NATS 재연결 성공")
+        """Reconnected callback"""
+        logger.info("NATS reconnected")

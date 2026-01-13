@@ -1,19 +1,19 @@
-"""SDK 예외 클래스"""
+"""SDK exception classes"""
 
 
 class SDKError(Exception):
-    """SDK 기본 예외"""
+    """SDK base exception"""
 
     pass
 
 
 class ConnectionError(SDKError):
-    """NATS 연결 실패"""
+    """NATS connection failure"""
 
     pass
 
 
 class PublishError(SDKError):
-    """데이터 발행 실패"""
+    """Data publish failure"""
 
     pass

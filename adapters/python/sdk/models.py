@@ -1,4 +1,4 @@
-"""데이터 모델 - Go 타입과 호환"""
+"""Data models - Compatible with Go types"""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ from typing import Any
 
 @dataclass
 class TagValue:
-    """개별 태그 값 - Go의 TagValue와 호환
+    """Individual tag value - Compatible with Go's TagValue
 
     Attributes:
-        name: 태그 이름 (필수)
-        quality: 데이터 품질 (GOOD, BAD, UNCERTAIN)
-        number: 숫자 값 (float)
-        text: 문자열 값
-        flag: 불리언 값
-        unit: 단위 (예: °C, %, mm/s)
+        name: Tag name (required)
+        quality: Data quality (GOOD, BAD, UNCERTAIN)
+        number: Numeric value (float)
+        text: String value
+        flag: Boolean value
+        unit: Unit (e.g., °C, %, mm/s)
     """
 
     name: str
@@ -28,7 +28,7 @@ class TagValue:
     unit: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON 직렬화용 딕셔너리 변환 - None 값 제외"""
+        """Convert to dictionary for JSON serialization - exclude None values"""
         result: dict[str, Any] = {"name": self.name, "quality": self.quality}
 
         if self.number is not None:
@@ -45,13 +45,13 @@ class TagValue:
 
 @dataclass
 class AssetData:
-    """Asset 데이터 - Go의 AssetData와 호환
+    """Asset data - Compatible with Go's AssetData
 
     Attributes:
-        asset_id: Asset 식별자
-        timestamp: 타임스탬프 (밀리초, epoch)
-        values: 태그 값 리스트
-        metadata: 추가 메타데이터
+        asset_id: Asset identifier
+        timestamp: Timestamp (milliseconds, epoch)
+        values: List of tag values
+        metadata: Additional metadata
     """
 
     asset_id: str
@@ -60,7 +60,7 @@ class AssetData:
     metadata: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """JSON 직렬화용 딕셔너리 변환"""
+        """Convert to dictionary for JSON serialization"""
         result: dict[str, Any] = {
             "asset_id": self.asset_id,
             "timestamp": self.timestamp,
