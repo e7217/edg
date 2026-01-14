@@ -46,10 +46,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           # Stop existing containers
-          docker-compose down || true
+          docker compose down || true
 
           # Start services
-          docker-compose up -d
+          docker compose up -d
 
           # Wait for services to be ready
           echo "Waiting for services to start..."
@@ -58,12 +58,12 @@ jobs:
       - name: Health check
         run: |
           echo "Checking service health..."
-          docker-compose ps
+          docker compose ps
 
           # Check edg-core health (NATS monitoring endpoint)
           curl -f http://localhost:8222/healthz || {
             echo "Health check failed!"
-            docker-compose logs edg-core
+            docker compose logs edg-core
             exit 1
           }
 
@@ -73,13 +73,13 @@ jobs:
         if: always()
         run: |
           echo "=== EDG Core Logs ==="
-          docker-compose logs --tail=50 edg-core
+          docker compose logs --tail=50 edg-core
 
           echo "=== VictoriaMetrics Logs ==="
-          docker-compose logs --tail=20 victoriametrics
+          docker compose logs --tail=20 victoriametrics
 
           echo "=== Telegraf Logs ==="
-          docker-compose logs --tail=20 telegraf
+          docker compose logs --tail=20 telegraf
 
       - name: Cleanup old images
         if: success()
