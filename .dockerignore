@@ -1,0 +1,45 @@
+# Git
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+docs/
+LICENSE
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# CI/CD
+.github/
+codecov.yml
+
+# Build artifacts
+edg-core
+*.exe
+*.out
+
+# Data directories (should be mounted as volumes)
+data/
+victoria-metrics-data/
+telegraf-1.29.0/
+
+# Dependencies (will be downloaded during build)
+vendor/
+
+# Test files
+*_test.go
+test/
+tests/
+
+# Claude and other tools
+.claude/
+.serena/
+
+# Scripts (not needed in container)
+scripts/
+install.sh

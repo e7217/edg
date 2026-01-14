@@ -1,0 +1,85 @@
+# version: '3.8'
+
+services:
+  # VictoriaMetrics - Time series database
+  edg-victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    container_name: edg-victoriametrics
+    restart: unless-stopped
+    ports:
+      - "8428:8428"
+    volumes:
+      - vm-data:/victoria-metrics-data
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=1y"
+      - "-httpListenAddr=:8428"
+    networks:
+      - service-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8428/health || nc -z localhost 8428"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # EDG Core - Main application
+  edg-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: edg-core:${VERSION:-latest}
+    container_name: edg-core
+    restart: unless-stopped
+    ports:
+      - "4222:4222"  # NATS
+      - "8222:8222"  # NATS monitoring
+    volumes:
+      - edg-data:/opt/edg/data
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ENV=${ENV:-dev}
+    depends_on:
+      - edg-victoriametrics
+    networks:
+      - service-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8222/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Telegraf - Metrics collection agent
+  edg-telegraf:
+    build:
+      context: .
+      dockerfile: Dockerfile.telegraf
+    image: edg-telegraf:${VERSION:-latest}
+    container_name: edg-telegraf
+    restart: unless-stopped
+    environment:
+      - NATS_SERVER=edg-core
+      - NATS_PORT=4222
+      - VM_HOST=edg-victoriametrics
+      - VM_PORT=8428
+    depends_on:
+      - edg-core
+      - edg-victoriametrics
+    networks:
+      - service-net
+    healthcheck:
+      test: ["CMD", "telegraf", "--test", "--config", "/etc/telegraf/telegraf.conf"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  vm-data:
+    driver: local
+  edg-data:
+    driver: local
+
+networks:
+  service-net:      
+    external: true
