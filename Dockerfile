@@ -3,6 +3,9 @@ FROM golang:1.24-bookworm AS builder
 
 WORKDIR /build
 
+# Install build dependencies for CGO (required for sqlite)
+RUN apt-get update && apt-get install -y gcc
+
 # Copy go mod files
 COPY go.mod go.sum ./
 RUN go mod download
@@ -10,8 +13,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o edg-core ./cmd/core
+# Build the application with CGO enabled for sqlite
+RUN CGO_ENABLED=1 GOOS=linux go build -a -o edg-core ./cmd/core
 
 # Final stage
 FROM debian:bookworm-slim
