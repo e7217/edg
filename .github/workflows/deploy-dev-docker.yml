@@ -66,10 +66,10 @@ jobs:
           docker compose logs --tail=50 edg-core
 
           echo "=== VictoriaMetrics Logs ==="
-          docker compose logs --tail=20 victoriametrics
+          docker compose logs --tail=20 edg-victoriametrics
 
           echo "=== Telegraf Logs ==="
-          docker compose logs --tail=20 telegraf
+          docker compose logs --tail=20 edg-telegraf
 
       - name: Cleanup old images
         if: success()
