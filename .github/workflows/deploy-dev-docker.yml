@@ -59,7 +59,7 @@ jobs:
           docker compose ps
 
           # Check edg-core health (NATS monitoring endpoint)
-          curl -f http://localhost:8222/healthz || {
+          docker exec edg-core curl -f http://localhost:8222/healthz || {
             echo "Health check failed!"
             docker compose logs edg-core
             exit 1
