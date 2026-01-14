@@ -1,0 +1,7 @@
+FROM telegraf:1.29
+
+# Copy telegraf configuration
+COPY configs/telegraf/telegraf.conf /etc/telegraf/telegraf.conf
+
+# Run as telegraf user
+USER telegraf

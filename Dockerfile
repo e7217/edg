@@ -30,8 +30,9 @@ WORKDIR /opt/edg
 # Copy binary from builder
 COPY --from=builder /build/edg-core /opt/edg/bin/edg-core
 
-# Copy configs
+# Copy configs and templates
 COPY configs /opt/edg/configs
+COPY templates /opt/edg/templates
 
 # Create non-root user
 RUN useradd -m -u 1000 edg && \

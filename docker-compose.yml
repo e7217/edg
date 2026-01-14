@@ -35,9 +35,7 @@ services:
       - "4222:4222"  # NATS
       - "8222:8222"  # NATS monitoring
     volumes:
-      - edg-data:/opt/edg
-      # - ./configs:/opt/edg/configs:ro
-      # - ./templates:/opt/edg/templates:ro
+      - edg-data:/opt/edg/data
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - ENV=${ENV:-dev}
@@ -54,11 +52,12 @@ services:
 
   # Telegraf - Metrics collection agent
   edg-telegraf:
-    image: telegraf:1.29
+    build:
+      context: .
+      dockerfile: Dockerfile.telegraf
+    image: edg-telegraf:${VERSION:-latest}
     container_name: edg-telegraf
     restart: unless-stopped
-    volumes:
-      - ./configs/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     depends_on:
       - edg-core
       - edg-victoriametrics

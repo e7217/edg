@@ -43,6 +43,3 @@ tests/
 # Scripts (not needed in container)
 scripts/
 install.sh
-
-# Templates (if not needed in container)
-templates/

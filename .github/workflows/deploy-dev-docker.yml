@@ -23,12 +23,20 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
 
-      - name: Build Docker image
+      - name: Build Docker images
         run: |
+          # Build EDG Core
           docker build \
             --build-arg VERSION=${{ steps.version.outputs.VERSION }} \
             -t edg-core:${{ steps.version.outputs.VERSION }} \
             -t edg-core:latest \
+            .
+
+          # Build Telegraf
+          docker build \
+            -f Dockerfile.telegraf \
+            -t edg-telegraf:${{ steps.version.outputs.VERSION }} \
+            -t edg-telegraf:latest \
             .
 
       - name: Deploy with Docker Compose
@@ -74,8 +82,15 @@ jobs:
       - name: Cleanup old images
         if: success()
         run: |
-          # Keep only last 3 versions
+          # Keep only last 3 versions of edg-core
           docker images edg-core --format "{{.ID}} {{.Tag}}" | \
+            grep -v latest | \
+            tail -n +4 | \
+            awk '{print $1}' | \
+            xargs -r docker rmi || true
+
+          # Keep only last 3 versions of edg-telegraf
+          docker images edg-telegraf --format "{{.ID}} {{.Tag}}" | \
             grep -v latest | \
             tail -n +4 | \
             awk '{print $1}' | \
