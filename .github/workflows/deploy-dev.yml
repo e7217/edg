@@ -36,8 +36,9 @@ jobs:
         run: |
           echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
           chmod 600 wg0.conf
-          sudo apt-get update && sudo apt-get install -y wireguard
+          sudo apt-get update && sudo apt-get install -y wireguard net-tools
           sudo wg-quick up ./wg0.conf
+          ifconfig
           ping -c 2 ${{ env.DEPLOY_HOST }}
 
       - name: Setup SSH
