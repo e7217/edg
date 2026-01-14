@@ -2,7 +2,7 @@
 
 ## GitHub Secrets 설정
 
-Repository Settings → Secrets and variables → Actions에서 다음 3개 추가:
+Repository Settings → Secrets and variables → Actions에서 다음 2개 추가:
 
 ### 1. WIREGUARD_CONFIG
 WireGuard 설정 파일 전체 내용:
@@ -14,12 +14,6 @@ cat wg0.conf  # 내용을 복사해서 Secret에 추가
 배포용 SSH 개인키:
 ```bash
 cat ~/.ssh/deploy_key  # 내용을 복사해서 Secret에 추가
-```
-
-### 3. SSH_KNOWN_HOSTS
-서버의 호스트 키:
-```bash
-ssh-keyscan -H 10.0.0.1  # 결과를 복사해서 Secret에 추가
 ```
 
 ## 서버 설정
@@ -74,7 +68,7 @@ git push origin main
 - 서버 WireGuard 상태: `sudo systemctl status wg-quick@wg0`
 
 ### SSH 연결 실패
-- `SSH_PRIVATE_KEY`와 `SSH_KNOWN_HOSTS` secret 확인
+- `SSH_PRIVATE_KEY` secret 확인
 - 서버에 공개키 등록 확인: `sudo cat /home/deploy/.ssh/authorized_keys`
 
 ### 배포 실패

@@ -44,16 +44,17 @@ jobs:
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/deploy_key
 
       - name: Deploy
         run: |
           # Upload binary
-          scp -i ~/.ssh/deploy_key edg-core ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:~/
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            edg-core ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }}:~/
 
           # Deploy and restart
-          ssh -i ~/.ssh/deploy_key ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} << 'ENDSSH'
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ env.DEPLOY_USER }}@${{ env.DEPLOY_HOST }} << 'ENDSSH'
             sudo systemctl stop edg-core || true
             sudo cp ~/edg-core /opt/edg/bin/
             sudo systemctl start edg-core
