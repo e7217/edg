@@ -42,7 +42,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - ENV=${ENV:-dev}
     depends_on:
-      - victoriametrics
+      - edg-victoriametrics
     networks:
       - service-net
     healthcheck:
@@ -61,7 +61,7 @@ services:
       - ./configs/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     depends_on:
       - edg-core
-      - victoriametrics
+      - edg-victoriametrics
     networks:
       - service-net
     healthcheck:
