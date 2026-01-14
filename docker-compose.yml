@@ -1,4 +1,4 @@
-version: '3.8'
+# version: '3.8'
 
 services:
   # VictoriaMetrics - Time series database
@@ -17,10 +17,11 @@ services:
     networks:
       - edg-network
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8428/health"]
-      interval: 30s
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8428/health || nc -z localhost 8428"]
+      interval: 10s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 15s
 
   # EDG Core - Main application
   edg-core:
@@ -41,8 +42,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - ENV=${ENV:-dev}
     depends_on:
-      victoriametrics:
-        condition: service_healthy
+      - victoriametrics
     networks:
       - edg-network
     healthcheck:
@@ -60,10 +60,8 @@ services:
     volumes:
       - ./configs/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
     depends_on:
-      edg-core:
-        condition: service_healthy
-      victoriametrics:
-        condition: service_healthy
+      - edg-core
+      - victoriametrics
     networks:
       - edg-network
     healthcheck:
