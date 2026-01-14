@@ -1,0 +1,92 @@
+name: Deploy to Dev Server (Docker)
+
+on:
+  push:
+    branches: [main, feat/*]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.0'
+
+      - name: Run tests
+        run: go test ./... -v -race
+
+  deploy:
+    needs: test
+    # runs-on: self-hosted  # Self-hosted runner with 'service' tag
+    runs-on: service  # Self-hosted runner with 'service' tag
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION=${GITHUB_SHA::7}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VERSION=${{ steps.version.outputs.VERSION }} \
+            -t edg-core:${{ steps.version.outputs.VERSION }} \
+            -t edg-core:latest \
+            .
+
+      - name: Deploy with Docker Compose
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          # Stop existing containers
+          docker-compose down || true
+
+          # Start services
+          docker-compose up -d
+
+          # Wait for services to be ready
+          echo "Waiting for services to start..."
+          sleep 10
+
+      - name: Health check
+        run: |
+          echo "Checking service health..."
+          docker-compose ps
+
+          # Check edg-core health (NATS monitoring endpoint)
+          curl -f http://localhost:8222/healthz || {
+            echo "Health check failed!"
+            docker-compose logs edg-core
+            exit 1
+          }
+
+          echo "✅ Deployment successful!"
+
+      - name: Show logs
+        if: always()
+        run: |
+          echo "=== EDG Core Logs ==="
+          docker-compose logs --tail=50 edg-core
+
+          echo "=== VictoriaMetrics Logs ==="
+          docker-compose logs --tail=20 victoriametrics
+
+          echo "=== Telegraf Logs ==="
+          docker-compose logs --tail=20 telegraf
+
+      - name: Cleanup old images
+        if: success()
+        run: |
+          # Keep only last 3 versions
+          docker images edg-core --format "{{.ID}} {{.Tag}}" | \
+            grep -v latest | \
+            tail -n +4 | \
+            awk '{print $1}' | \
+            xargs -r docker rmi || true

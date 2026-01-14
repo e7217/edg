@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # VictoriaMetrics - Time series database
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:latest
+    container_name: edg-victoriametrics
+    restart: unless-stopped
+    ports:
+      - "8428:8428"
+    volumes:
+      - vm-data:/victoria-metrics-data
+    command:
+      - "-storageDataPath=/victoria-metrics-data"
+      - "-retentionPeriod=1y"
+      - "-httpListenAddr=:8428"
+    networks:
+      - edg-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8428/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # EDG Core - Main application
+  edg-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: edg-core:${VERSION:-latest}
+    container_name: edg-core
+    restart: unless-stopped
+    ports:
+      - "4222:4222"  # NATS
+      - "8222:8222"  # NATS monitoring
+    volumes:
+      - ./data:/opt/edg/data
+      - ./configs:/opt/edg/configs:ro
+      - ./templates:/opt/edg/templates:ro
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ENV=${ENV:-dev}
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+    networks:
+      - edg-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8222/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Telegraf - Metrics collection agent
+  telegraf:
+    image: telegraf:1.29
+    container_name: edg-telegraf
+    restart: unless-stopped
+    volumes:
+      - ./configs/telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+    depends_on:
+      edg-core:
+        condition: service_healthy
+      victoriametrics:
+        condition: service_healthy
+    networks:
+      - edg-network
+    healthcheck:
+      test: ["CMD", "telegraf", "--test", "--config", "/etc/telegraf/telegraf.conf"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  vm-data:
+    driver: local
+
+networks:
+  edg-network:
+    driver: bridge
