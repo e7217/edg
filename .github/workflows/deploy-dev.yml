@@ -19,8 +19,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     env:
-      DEPLOY_HOST: "10.0.0.1"
-      DEPLOY_USER: "deploy"
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
 
     steps:
       - uses: actions/checkout@v4
