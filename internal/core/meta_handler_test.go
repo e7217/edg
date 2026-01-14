@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -145,8 +146,8 @@ func TestMetaHandler_ListAssets(t *testing.T) {
 	// Create multiple assets
 	for i := 1; i <= 3; i++ {
 		asset := &Asset{
-			ID:        string(rune('0' + i)),
-			Name:      string(rune('a' + i - 1)),
+			ID:        fmt.Sprintf("id-%d", i),
+			Name:      fmt.Sprintf("asset-%d", i),
 			CreatedAt: time.Now(),
 		}
 		err = store.CreateAsset(asset)

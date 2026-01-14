@@ -106,7 +106,8 @@ func TestGetDataCount(t *testing.T) {
 				{Name: "temp", Number: &tempValue},
 			},
 		}
-		jsonData, _ := json.Marshal(data)
+		jsonData, err := json.Marshal(data)
+		require.NoError(t, err)
 		msg := &nats.Msg{Data: jsonData}
 		handler.HandleAssetData(msg)
 	}

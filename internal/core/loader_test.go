@@ -55,8 +55,8 @@ func TestLoadFromFile_MissingName(t *testing.T) {
 	assert.Contains(t, err.Error(), "template name is missing")
 }
 
-// TestLoadFromDir_Success tests loading multiple templates from directory
-func TestLoadFromDir_Success(t *testing.T) {
+// TestLoadFromDir_FailsOnInvalidFile tests that LoadFromDir returns error when directory contains invalid template
+func TestLoadFromDir_FailsOnInvalidFile(t *testing.T) {
 	loader := NewTemplateLoader()
 
 	// LoadFromDir returns error if any file fails to load
