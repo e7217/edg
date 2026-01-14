@@ -1,0 +1,10 @@
+name: test-sensor
+description: Test sensor template for unit tests
+resources:
+  - name: temperature
+    valueType: NUMBER
+    unit: celsius
+  - name: status
+    valueType: TEXT
+  - name: enabled
+    valueType: FLAG

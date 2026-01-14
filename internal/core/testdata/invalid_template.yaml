@@ -1,0 +1,5 @@
+# Invalid YAML - missing required 'name' field
+description: Invalid template without name
+resources:
+  - name: temperature
+    type: NUMBER
