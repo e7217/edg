@@ -58,6 +58,11 @@ services:
     image: edg-telegraf:${VERSION:-latest}
     container_name: edg-telegraf
     restart: unless-stopped
+    environment:
+      - NATS_SERVER=edg-core
+      - NATS_PORT=4222
+      - VM_HOST=edg-victoriametrics
+      - VM_PORT=8428
     depends_on:
       - edg-core
       - edg-victoriametrics
