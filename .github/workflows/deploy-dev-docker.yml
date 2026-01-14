@@ -22,7 +22,10 @@ jobs:
     needs: test
     # runs-on: self-hosted  # Self-hosted runner with 'service' tag
     runs-on: service  # Self-hosted runner with 'service' tag
-
+    container:
+      image: docker:24-cli
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
     steps:
       - uses: actions/checkout@v4
 

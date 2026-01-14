@@ -2,7 +2,7 @@
 
 services:
   # VictoriaMetrics - Time series database
-  victoriametrics:
+  edg-victoriametrics:
     image: victoriametrics/victoria-metrics:latest
     container_name: edg-victoriametrics
     restart: unless-stopped
@@ -15,7 +15,7 @@ services:
       - "-retentionPeriod=1y"
       - "-httpListenAddr=:8428"
     networks:
-      - edg-network
+      - service-net
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8428/health || nc -z localhost 8428"]
       interval: 10s
@@ -44,7 +44,7 @@ services:
     depends_on:
       - victoriametrics
     networks:
-      - edg-network
+      - service-net
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8222/healthz"]
       interval: 30s
@@ -53,7 +53,7 @@ services:
       start_period: 10s
 
   # Telegraf - Metrics collection agent
-  telegraf:
+  edg-telegraf:
     image: telegraf:1.29
     container_name: edg-telegraf
     restart: unless-stopped
@@ -63,7 +63,7 @@ services:
       - edg-core
       - victoriametrics
     networks:
-      - edg-network
+      - service-net
     healthcheck:
       test: ["CMD", "telegraf", "--test", "--config", "/etc/telegraf/telegraf.conf"]
       interval: 60s
@@ -77,5 +77,5 @@ volumes:
     driver: local
 
 networks:
-  edg-network:
-    driver: bridge
+  service-net:      
+    external: true
