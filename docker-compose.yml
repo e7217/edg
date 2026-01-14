@@ -35,9 +35,9 @@ services:
       - "4222:4222"  # NATS
       - "8222:8222"  # NATS monitoring
     volumes:
-      - ./data:/opt/edg/data
-      - ./configs:/opt/edg/configs:ro
-      - ./templates:/opt/edg/templates:ro
+      - edg-data:/opt/edg
+      # - ./configs:/opt/edg/configs:ro
+      # - ./templates:/opt/edg/templates:ro
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - ENV=${ENV:-dev}
@@ -72,6 +72,8 @@ services:
 
 volumes:
   vm-data:
+    driver: local
+  edg-data:
     driver: local
 
 networks:
