@@ -15,20 +15,26 @@ jobs:
           - goos: linux
             goarch: amd64
             telegraf_suffix: linux_amd64
+            vm_suffix: linux-amd64
           - goos: linux
             goarch: arm64
             telegraf_suffix: linux_arm64
+            vm_suffix: linux-arm64
           - goos: darwin
             goarch: amd64
             telegraf_suffix: darwin_amd64
+            vm_suffix: darwin-amd64
           - goos: windows
             goarch: amd64
             telegraf_suffix: windows_amd64
+            vm_suffix: windows-amd64
             ext: .exe
 
     runs-on: ubuntu-latest
     env:
       TELEGRAF_VERSION: "1.29.0"
+      VM_VERSION: "1.133.0"
+      DEPS_TAG: "deps-v1"
 
     steps:
       - uses: actions/checkout@v4
@@ -45,14 +51,34 @@ jobs:
         run: |
           go build -ldflags="-s -w" -o edg-core${{ matrix.ext }} ./cmd/core
 
-      - name: Download Telegraf
+      - name: Download dependencies from own release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          # Download Telegraf
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            wget -q https://dl.influxdata.com/telegraf/releases/telegraf-${{ env.TELEGRAF_VERSION }}_${{ matrix.telegraf_suffix }}.zip
+            gh release download ${{ env.DEPS_TAG }} \
+              --pattern "telegraf-${{ env.TELEGRAF_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" \
+              --repo ${{ github.repository }}
             unzip -q telegraf-*.zip
           else
-            wget -q https://dl.influxdata.com/telegraf/releases/telegraf-${{ env.TELEGRAF_VERSION }}_${{ matrix.telegraf_suffix }}.tar.gz
+            gh release download ${{ env.DEPS_TAG }} \
+              --pattern "telegraf-${{ env.TELEGRAF_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" \
+              --repo ${{ github.repository }}
             tar -xzf telegraf-*.tar.gz
+          fi
+
+          # Download VictoriaMetrics
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            gh release download ${{ env.DEPS_TAG }} \
+              --pattern "victoria-metrics-${{ matrix.vm_suffix }}-v${{ env.VM_VERSION }}.zip" \
+              --repo ${{ github.repository }}
+            unzip -q victoria-metrics-*.zip
+          else
+            gh release download ${{ env.DEPS_TAG }} \
+              --pattern "victoria-metrics-${{ matrix.vm_suffix }}-v${{ env.VM_VERSION }}.tar.gz" \
+              --repo ${{ github.repository }}
+            tar -xzf victoria-metrics-*.tar.gz
           fi
 
       - name: Package Release
@@ -64,13 +90,16 @@ jobs:
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
             cp telegraf-*/telegraf.exe "$DIST_DIR/"
+            cp victoria-metrics-prod.exe "$DIST_DIR/" || cp victoria-metrics.exe "$DIST_DIR/victoria-metrics-prod.exe"
           else
             cp telegraf-*/usr/bin/telegraf "$DIST_DIR/"
+            cp victoria-metrics-prod "$DIST_DIR/" || cp victoria-metrics "$DIST_DIR/victoria-metrics-prod"
           fi
 
           cp -r configs "$DIST_DIR/"
           cp scripts/install.sh "$DIST_DIR/"
           cp README.md "$DIST_DIR/"
+          cp THIRD_PARTY_LICENSES.md "$DIST_DIR/"
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
             zip -r "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$DIST_DIR"
