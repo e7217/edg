@@ -19,8 +19,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     env:
-      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
-      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_HOST: 192.168.100.80
+      DEPLOY_USER: e7217
 
     steps:
       - uses: actions/checkout@v4
