@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -448,4 +449,61 @@ func TestHandleRelationDelete_Success(t *testing.T) {
 	retrieved, err := handler.store.GetRelation("rel-001")
 	require.NoError(t, err)
 	assert.Nil(t, retrieved)
+}
+
+// ==================== Reply Function Tests ====================
+
+// TestMarshalResponse_Success tests successful response marshaling
+func TestMarshalResponse_Success(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	loader := NewTemplateLoader()
+	handler := NewMetaHandler(store, loader)
+
+	// Normal response should marshal successfully
+	resp := Response{
+		Success: true,
+		Data: map[string]string{
+			"key": "value",
+		},
+	}
+
+	data := handler.marshalResponse(resp)
+	require.NotNil(t, data)
+
+	// Verify marshaled data is valid JSON
+	var result Response
+	err = json.Unmarshal(data, &result)
+	require.NoError(t, err)
+	assert.True(t, result.Success)
+}
+
+// TestMarshalResponse_MarshalError tests fallback when JSON marshal fails
+func TestMarshalResponse_MarshalError(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	loader := NewTemplateLoader()
+	handler := NewMetaHandler(store, loader)
+
+	// Create response with unmarshalable type (channel)
+	unmarshalable := make(chan int)
+	resp := Response{
+		Success: true,
+		Data:    unmarshalable,
+	}
+
+	// Call marshalResponse - should return fallback error response
+	data := handler.marshalResponse(resp)
+	require.NotNil(t, data)
+
+	// Verify fallback response was returned
+	var result Response
+	err = json.Unmarshal(data, &result)
+	require.NoError(t, err)
+	assert.False(t, result.Success, "Expected Success=false in fallback response")
+	assert.Contains(t, result.Error, "internal error", "Expected error message in fallback response")
 }
