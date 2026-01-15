@@ -115,7 +115,9 @@ func (s *Store) GetAsset(id string) (*Asset, error) {
 		return nil, fmt.Errorf("failed to get asset: %w", err)
 	}
 
-	json.Unmarshal([]byte(labelsJSON), &asset.Labels)
+	if err := json.Unmarshal([]byte(labelsJSON), &asset.Labels); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset labels: %w", err)
+	}
 	return &asset, nil
 }
 
@@ -136,7 +138,9 @@ func (s *Store) GetAssetByName(name string) (*Asset, error) {
 		return nil, fmt.Errorf("failed to get asset: %w", err)
 	}
 
-	json.Unmarshal([]byte(labelsJSON), &asset.Labels)
+	if err := json.Unmarshal([]byte(labelsJSON), &asset.Labels); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset labels: %w", err)
+	}
 	return &asset, nil
 }
 
@@ -157,7 +161,9 @@ func (s *Store) ListAssets() ([]*Asset, error) {
 		if err := rows.Scan(&asset.ID, &asset.Name, &asset.TemplateName, &labelsJSON, &asset.CreatedAt); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(labelsJSON), &asset.Labels)
+		if err := json.Unmarshal([]byte(labelsJSON), &asset.Labels); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal asset labels: %w", err)
+		}
 		assets = append(assets, &asset)
 	}
 
@@ -292,7 +298,9 @@ func (s *Store) GetRelation(id string) (*AssetRelation, error) {
 
 	// Unmarshal metadata if present
 	if metadataJSON.Valid && metadataJSON.String != "" {
-		json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata)
+		if err := json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal relation metadata: %w", err)
+		}
 	}
 
 	return &relation, nil
@@ -322,7 +330,9 @@ func (s *Store) GetRelationsBySourceAsset(assetID string) ([]*AssetRelation, err
 		}
 
 		if metadataJSON.Valid && metadataJSON.String != "" {
-			json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata)
+			if err := json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal relation metadata: %w", err)
+			}
 		}
 
 		relations = append(relations, &relation)
@@ -355,7 +365,9 @@ func (s *Store) GetRelationsByTargetAsset(assetID string) ([]*AssetRelation, err
 		}
 
 		if metadataJSON.Valid && metadataJSON.String != "" {
-			json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata)
+			if err := json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal relation metadata: %w", err)
+			}
 		}
 
 		relations = append(relations, &relation)

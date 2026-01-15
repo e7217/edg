@@ -501,3 +501,168 @@ func TestCascadeDelete_WhenAssetDeleted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, retrieved, "relation should be cascade deleted")
 }
+
+// ==================== JSON Unmarshal Error Tests ====================
+
+// TestGetAsset_InvalidLabelsJSON tests error handling when labels JSON is malformed
+func TestGetAsset_InvalidLabelsJSON(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Insert asset with malformed JSON directly into DB
+	_, err = store.db.Exec(
+		`INSERT INTO assets (id, name, template_name, labels, created_at) VALUES (?, ?, ?, ?, ?)`,
+		"asset-001", "test-sensor", "temperature", "invalid-json-{", time.Now(),
+	)
+	require.NoError(t, err)
+
+	// Attempt to get asset - should return error due to invalid JSON
+	asset, err := store.GetAsset("asset-001")
+	assert.Error(t, err, "should return error for malformed labels JSON")
+	assert.Nil(t, asset)
+	if err != nil {
+		assert.Contains(t, err.Error(), "unmarshal")
+	}
+}
+
+// TestGetAssetByName_InvalidLabelsJSON tests error handling when labels JSON is malformed
+func TestGetAssetByName_InvalidLabelsJSON(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Insert asset with malformed JSON directly into DB
+	_, err = store.db.Exec(
+		`INSERT INTO assets (id, name, template_name, labels, created_at) VALUES (?, ?, ?, ?, ?)`,
+		"asset-001", "test-sensor", "temperature", "{invalid-json", time.Now(),
+	)
+	require.NoError(t, err)
+
+	// Attempt to get asset by name - should return error due to invalid JSON
+	asset, err := store.GetAssetByName("test-sensor")
+	assert.Error(t, err, "should return error for malformed labels JSON")
+	assert.Nil(t, asset)
+	if err != nil {
+		assert.Contains(t, err.Error(), "unmarshal")
+	}
+}
+
+// TestListAssets_InvalidLabelsJSON tests error handling when any asset has malformed labels JSON
+func TestListAssets_InvalidLabelsJSON(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Insert valid asset
+	validAsset := &Asset{
+		ID:        "asset-001",
+		Name:      "valid-sensor",
+		CreatedAt: time.Now(),
+		Labels:    []string{"label1"},
+	}
+	require.NoError(t, store.CreateAsset(validAsset))
+
+	// Insert asset with malformed JSON directly into DB
+	_, err = store.db.Exec(
+		`INSERT INTO assets (id, name, template_name, labels, created_at) VALUES (?, ?, ?, ?, ?)`,
+		"asset-002", "invalid-sensor", "temperature", "not-json-at-all", time.Now(),
+	)
+	require.NoError(t, err)
+
+	// Attempt to list assets - should return error due to invalid JSON
+	assets, err := store.ListAssets()
+	assert.Error(t, err, "should return error when any asset has malformed labels JSON")
+	assert.Nil(t, assets)
+}
+
+// TestGetRelation_InvalidMetadataJSON tests error handling when metadata JSON is malformed
+func TestGetRelation_InvalidMetadataJSON(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Create valid assets first
+	sourceAsset := &Asset{ID: "asset-001", Name: "sensor-1", CreatedAt: time.Now()}
+	targetAsset := &Asset{ID: "asset-002", Name: "equipment-1", CreatedAt: time.Now()}
+	require.NoError(t, store.CreateAsset(sourceAsset))
+	require.NoError(t, store.CreateAsset(targetAsset))
+
+	// Insert relation with malformed metadata JSON directly into DB
+	_, err = store.db.Exec(
+		`INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, created_at, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		"rel-001", "asset-001", "asset-002", RelationPartOf, time.Now(), "{malformed-json:",
+	)
+	require.NoError(t, err)
+
+	// Attempt to get relation - should return error due to invalid JSON
+	relation, err := store.GetRelation("rel-001")
+	assert.Error(t, err, "should return error for malformed metadata JSON")
+	assert.Nil(t, relation)
+	if err != nil {
+		assert.Contains(t, err.Error(), "unmarshal")
+	}
+}
+
+// TestGetRelationsBySourceAsset_InvalidMetadataJSON tests error handling for malformed metadata
+func TestGetRelationsBySourceAsset_InvalidMetadataJSON(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Create valid assets first
+	sourceAsset := &Asset{ID: "asset-001", Name: "sensor-1", CreatedAt: time.Now()}
+	targetAsset := &Asset{ID: "asset-002", Name: "equipment-1", CreatedAt: time.Now()}
+	require.NoError(t, store.CreateAsset(sourceAsset))
+	require.NoError(t, store.CreateAsset(targetAsset))
+
+	// Insert valid relation
+	validRelation := &AssetRelation{
+		ID:            "rel-001",
+		SourceAssetID: "asset-001",
+		TargetAssetID: "asset-002",
+		RelationType:  RelationPartOf,
+		CreatedAt:     time.Now(),
+	}
+	require.NoError(t, store.CreateRelation(validRelation))
+
+	// Insert relation with malformed metadata JSON directly into DB
+	_, err = store.db.Exec(
+		`INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, created_at, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		"rel-002", "asset-001", "asset-002", RelationConnectedTo, time.Now(), "invalid-json-data",
+	)
+	require.NoError(t, err)
+
+	// Attempt to get relations by source - should return error due to invalid JSON
+	relations, err := store.GetRelationsBySourceAsset("asset-001")
+	assert.Error(t, err, "should return error when any relation has malformed metadata JSON")
+	assert.Nil(t, relations)
+}
+
+// TestGetRelationsByTargetAsset_InvalidMetadataJSON tests error handling for malformed metadata
+func TestGetRelationsByTargetAsset_InvalidMetadataJSON(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	// Create valid assets first
+	sourceAsset := &Asset{ID: "asset-001", Name: "sensor-1", CreatedAt: time.Now()}
+	targetAsset := &Asset{ID: "asset-002", Name: "equipment-1", CreatedAt: time.Now()}
+	require.NoError(t, store.CreateAsset(sourceAsset))
+	require.NoError(t, store.CreateAsset(targetAsset))
+
+	// Insert relation with malformed metadata JSON directly into DB
+	_, err = store.db.Exec(
+		`INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, created_at, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		"rel-001", "asset-001", "asset-002", RelationPartOf, time.Now(), "}invalid-json{",
+	)
+	require.NoError(t, err)
+
+	// Attempt to get relations by target - should return error due to invalid JSON
+	relations, err := store.GetRelationsByTargetAsset("asset-002")
+	assert.Error(t, err, "should return error when any relation has malformed metadata JSON")
+	assert.Nil(t, relations)
+}
