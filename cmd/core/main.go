@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -13,7 +15,26 @@ import (
 	"github.com/e7217/edg/internal/core"
 )
 
+var (
+	// Version information (injected at build time via -ldflags)
+	Version   = "dev"
+	BuildTime = "unknown"
+	GitCommit = "unknown"
+)
+
 func main() {
+	// Parse command-line flags
+	versionFlag := flag.Bool("version", false, "Print version information and exit")
+	flag.Parse()
+
+	// Handle version flag
+	if *versionFlag {
+		fmt.Printf("EDG Platform Core\n")
+		fmt.Printf("Version:    %s\n", Version)
+		fmt.Printf("Build Time: %s\n", BuildTime)
+		fmt.Printf("Git Commit: %s\n", GitCommit)
+		os.Exit(0)
+	}
 	// 1. Embedded NATS Server configuration
 	opts := &server.Options{
 		Port:     4222,

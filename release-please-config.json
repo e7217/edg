@@ -1,0 +1,19 @@
+{
+  "release-type": "go",
+  "packages": {
+    ".": {
+      "package-name": "edg",
+      "changelog-path": "CHANGELOG.md",
+      "release-type": "go",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "README.md",
+          "glob": false
+        }
+      ]
+    }
+  }
+}

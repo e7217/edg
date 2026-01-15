@@ -1,0 +1,18 @@
+# EDG Core Development Configuration
+
+nats:
+  port: 4222
+  http_port: 8222
+  log_level: debug
+
+storage:
+  metadata_db: ./data/metadata.db
+  data_dir: ./data
+
+templates:
+  dir: ./templates
+  auto_reload: true
+
+logging:
+  level: debug
+  format: text

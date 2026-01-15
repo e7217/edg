@@ -49,7 +49,14 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags="-s -w" -o edg-core${{ matrix.ext }} ./cmd/core
+          BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          go build \
+            -ldflags="-s -w \
+              -X main.Version=${{ github.ref_name }} \
+              -X main.BuildTime=${BUILD_TIME} \
+              -X main.GitCommit=${{ github.sha }}" \
+            -o edg-core${{ matrix.ext }} \
+            ./cmd/core
 
       - name: Download dependencies from own release
         env:

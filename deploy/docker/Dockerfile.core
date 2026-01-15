@@ -19,6 +19,10 @@ RUN CGO_ENABLED=1 GOOS=linux go build -a -o edg-core ./cmd/core
 # Final stage
 FROM debian:bookworm-slim
 
+# Environment selection (dev, staging, prod)
+ARG ENV=prod
+ENV EDG_ENV=${ENV}
+
 # Install ca-certificates for HTTPS and curl for health checks
 RUN apt-get update && apt-get install -y \
     ca-certificates \
@@ -33,6 +37,9 @@ COPY --from=builder /build/edg-core /opt/edg/bin/edg-core
 # Copy configs and templates
 COPY deploy/configs /opt/edg/configs
 COPY templates /opt/edg/templates
+
+# Create symlink to environment-specific config
+RUN ln -sf /opt/edg/configs/core/config.${EDG_ENV}.yaml /opt/edg/config.yaml
 
 # Create non-root user
 RUN useradd -m -u 1000 edg && \

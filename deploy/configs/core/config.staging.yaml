@@ -1,0 +1,18 @@
+# EDG Core Staging Configuration
+
+nats:
+  port: 4222
+  http_port: 8222
+  log_level: info
+
+storage:
+  metadata_db: /var/lib/edg/metadata.db
+  data_dir: /var/lib/edg/data
+
+templates:
+  dir: /etc/edg/templates
+  auto_reload: true
+
+logging:
+  level: info
+  format: json
