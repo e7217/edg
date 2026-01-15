@@ -29,7 +29,7 @@ go.work.sum
 
 # Editor/IDE
 # .idea/
-# .vscode/
+.vscode/
 
 
 ### python ###
@@ -51,3 +51,6 @@ telegraf*/
 ### victoriametrics ###
 victoria-metrics-data/
 victoria-metrics*
+
+# AI
+.agent/
