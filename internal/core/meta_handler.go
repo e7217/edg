@@ -78,7 +78,12 @@ func (h *MetaHandler) marshalResponse(resp Response) []byte {
 		log.Printf("[Meta] Failed to marshal response: %v", err)
 		// Send fallback error response instead of corrupted data
 		errorResp := Response{Success: false, Error: "internal error: response marshal failed"}
-		data, _ = json.Marshal(errorResp)
+		if fallbackData, err2 := json.Marshal(errorResp); err2 != nil {
+			log.Printf("[Meta] Failed to marshal fallback error response: %v", err2)
+			data = []byte("{\"success\":false,\"error\":\"internal error\"}")
+		} else {
+			data = fallbackData
+		}
 	}
 	return data
 }
