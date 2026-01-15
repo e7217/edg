@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import nats
 
 from .exceptions import ConnectionError, PublishError
-from .models import AssetData
+from .models import AssetData, AssetRelation
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 # NATS topics
 TOPIC_ASSET_DATA = "platform.data.asset"
+
+# NATS relation subjects
+SUBJECT_RELATION_CREATE = "platform.meta.relation.create"
+SUBJECT_RELATION_GET = "platform.meta.relation.get"
+SUBJECT_RELATION_LIST = "platform.meta.relation.list"
+SUBJECT_RELATION_DELETE = "platform.meta.relation.delete"
 
 
 class NATSClientWrapper:
@@ -99,3 +105,166 @@ class NATSClientWrapper:
     async def _reconnected_callback(self) -> None:
         """Reconnected callback"""
         logger.info("NATS reconnected")
+
+    async def create_relation(
+        self,
+        source_asset_id: str,
+        target_asset_id: str,
+        relation_type: str,
+        metadata: dict[str, str] | None = None,
+    ) -> AssetRelation:
+        """Create asset relation
+
+        Args:
+            source_asset_id: Source asset ID
+            target_asset_id: Target asset ID
+            relation_type: Relation type (partOf, connectedTo, locatedIn)
+            metadata: Optional metadata dictionary
+
+        Returns:
+            Created AssetRelation
+
+        Raises:
+            PublishError: When request fails
+        """
+        if not self.is_connected:
+            raise PublishError("NATS not connected")
+
+        request_data = {
+            "source_asset_id": source_asset_id,
+            "target_asset_id": target_asset_id,
+            "relation_type": relation_type,
+        }
+        if metadata:
+            request_data["metadata"] = metadata
+
+        try:
+            payload = json.dumps(request_data).encode()
+            response = await self._nc.request(SUBJECT_RELATION_CREATE, payload, timeout=5.0)
+            result = json.loads(response.data.decode())
+
+            if not result.get("success"):
+                raise PublishError(f"Create relation failed: {result.get('error')}")
+
+            data = result["data"]
+            return AssetRelation(
+                id=data["id"],
+                source_asset_id=data["source_asset_id"],
+                target_asset_id=data["target_asset_id"],
+                relation_type=data["relation_type"],
+                created_at=data["created_at"],
+                metadata=data.get("metadata"),
+            )
+        except Exception as e:
+            raise PublishError(f"Create relation failed: {e}") from e
+
+    async def get_relation(self, relation_id: str) -> AssetRelation | None:
+        """Get relation by ID
+
+        Args:
+            relation_id: Relation ID
+
+        Returns:
+            AssetRelation or None if not found
+
+        Raises:
+            PublishError: When request fails
+        """
+        if not self.is_connected:
+            raise PublishError("NATS not connected")
+
+        try:
+            payload = json.dumps({"id": relation_id}).encode()
+            response = await self._nc.request(SUBJECT_RELATION_GET, payload, timeout=5.0)
+            result = json.loads(response.data.decode())
+
+            if not result.get("success"):
+                error = result.get("error", "")
+                if "not found" in error:
+                    return None
+                raise PublishError(f"Get relation failed: {error}")
+
+            data = result["data"]
+            return AssetRelation(
+                id=data["id"],
+                source_asset_id=data["source_asset_id"],
+                target_asset_id=data["target_asset_id"],
+                relation_type=data["relation_type"],
+                created_at=data["created_at"],
+                metadata=data.get("metadata"),
+            )
+        except Exception as e:
+            raise PublishError(f"Get relation failed: {e}") from e
+
+    async def list_relations(
+        self,
+        asset_id: str,
+        relation_type: str | None = None,
+        direction: str = "both",
+    ) -> list[AssetRelation]:
+        """List relations by asset ID
+
+        Args:
+            asset_id: Asset ID to find relations for
+            relation_type: Optional filter by relation type
+            direction: Direction filter (outgoing, incoming, both)
+
+        Returns:
+            List of AssetRelations
+
+        Raises:
+            PublishError: When request fails
+        """
+        if not self.is_connected:
+            raise PublishError("NATS not connected")
+
+        request_data = {"asset_id": asset_id, "direction": direction}
+        if relation_type:
+            request_data["relation_type"] = relation_type
+
+        try:
+            payload = json.dumps(request_data).encode()
+            response = await self._nc.request(SUBJECT_RELATION_LIST, payload, timeout=5.0)
+            result = json.loads(response.data.decode())
+
+            if not result.get("success"):
+                raise PublishError(f"List relations failed: {result.get('error')}")
+
+            data = result.get("data", [])
+            return [
+                AssetRelation(
+                    id=item["id"],
+                    source_asset_id=item["source_asset_id"],
+                    target_asset_id=item["target_asset_id"],
+                    relation_type=item["relation_type"],
+                    created_at=item["created_at"],
+                    metadata=item.get("metadata"),
+                )
+                for item in data
+            ]
+        except Exception as e:
+            raise PublishError(f"List relations failed: {e}") from e
+
+    async def delete_relation(self, relation_id: str) -> None:
+        """Delete relation
+
+        Args:
+            relation_id: Relation ID to delete
+
+        Raises:
+            PublishError: When request fails
+        """
+        if not self.is_connected:
+            raise PublishError("NATS not connected")
+
+        try:
+            payload = json.dumps({"id": relation_id}).encode()
+            response = await self._nc.request(SUBJECT_RELATION_DELETE, payload, timeout=5.0)
+            result = json.loads(response.data.decode())
+
+            if not result.get("success"):
+                raise PublishError(f"Delete relation failed: {result.get('error')}")
+
+            logger.debug(f"Deleted relation: {relation_id}")
+        except Exception as e:
+            raise PublishError(f"Delete relation failed: {e}") from e

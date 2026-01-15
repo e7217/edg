@@ -1,0 +1,116 @@
+{
+  "@context": {
+    "@version": 1.1,
+    "@vocab": "https://edg.e7217.io/vocab#",
+
+    "sosa": "http://www.w3.org/ns/sosa/",
+    "ssn": "http://www.w3.org/ns/ssn/",
+    "qudt": "http://qudt.org/schema/qudt/",
+    "schema": "http://schema.org/",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+
+    "Asset": {
+      "@id": "sosa:Platform",
+      "@type": "@id"
+    },
+
+    "AssetRelation": {
+      "@id": "edg:AssetRelation",
+      "@type": "@id"
+    },
+
+    "partOf": {
+      "@id": "ssn:isPartOf",
+      "@type": "@id",
+      "comment": "Indicates a hierarchical relationship where one asset is a component of another"
+    },
+
+    "connectedTo": {
+      "@id": "sosa:isHostedBy",
+      "@type": "@id",
+      "comment": "Indicates a peer/network connection between assets, such as sensors hosted by equipment"
+    },
+
+    "locatedIn": {
+      "@id": "schema:containedInPlace",
+      "@type": "@id",
+      "comment": "Indicates spatial containment, where one asset is physically located within another"
+    },
+
+    "id": "@id",
+    "type": "@type",
+
+    "source_asset_id": {
+      "@id": "edg:sourceAsset",
+      "@type": "@id"
+    },
+
+    "target_asset_id": {
+      "@id": "edg:targetAsset",
+      "@type": "@id"
+    },
+
+    "relation_type": {
+      "@id": "edg:relationType",
+      "@type": "@vocab"
+    },
+
+    "created_at": {
+      "@id": "schema:dateCreated",
+      "@type": "xsd:dateTime"
+    },
+
+    "metadata": {
+      "@id": "edg:metadata",
+      "@type": "@json"
+    },
+
+    "name": {
+      "@id": "schema:name",
+      "@type": "xsd:string"
+    },
+
+    "template_name": {
+      "@id": "edg:templateName",
+      "@type": "xsd:string"
+    },
+
+    "labels": {
+      "@id": "schema:keywords",
+      "@container": "@set"
+    }
+  },
+
+  "@graph": [
+    {
+      "@id": "edg:AssetRelation",
+      "@type": "rdfs:Class",
+      "rdfs:label": "Asset Relation",
+      "rdfs:comment": "Represents a typed relationship between two assets in the EDG platform",
+      "rdfs:subClassOf": "schema:Action"
+    },
+    {
+      "@id": "edg:sourceAsset",
+      "@type": "rdf:Property",
+      "rdfs:label": "source asset",
+      "rdfs:comment": "The asset that is the source of the relationship",
+      "rdfs:domain": "edg:AssetRelation",
+      "rdfs:range": "sosa:Platform"
+    },
+    {
+      "@id": "edg:targetAsset",
+      "@type": "rdf:Property",
+      "rdfs:label": "target asset",
+      "rdfs:comment": "The asset that is the target of the relationship",
+      "rdfs:domain": "edg:AssetRelation",
+      "rdfs:range": "sosa:Platform"
+    },
+    {
+      "@id": "edg:relationType",
+      "@type": "rdf:Property",
+      "rdfs:label": "relation type",
+      "rdfs:comment": "The type of relationship (partOf, connectedTo, locatedIn)",
+      "rdfs:domain": "edg:AssetRelation"
+    }
+  ]
+}
