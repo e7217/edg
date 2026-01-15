@@ -4,21 +4,21 @@
 > 
 > High-performance data ingestion, validation, and storage platform for IIoT.
 
-## 🚀 Why EDG?
+## Why EDG?
 
-*   **⚡ Lightweight & Fast**: Built with Go and NATS for ultra-low latency.
-*   **🔒 Reliable**: Built-in data validation and auto-registration of assets.
-*   **🔌 Plug & Play**: Simple Python adapters for reading any sensor data.
-*   **📊 Time-Series Ready**: Seamless integration with VictoriaMetrics/InfluxDB via Telegraf.
+*   **Lightweight & Fast**: Built with Go and NATS for ultra-low latency.
+*   **Reliable**: Built-in data validation and auto-registration of assets.
+*   **Plug & Play**: Simple Python adapters for reading any sensor data.
+*   **Time-Series Ready**: Seamless integration with VictoriaMetrics/InfluxDB via Telegraf.
 
-## ✨ Key Features
+## Key Features
 
 *   **Automatic Asset Registration**: Device discovery and metadata registration without manual configuration.
 *   **Data Validation**: Enforces schema and quality checks at the edge before data enters your storage.
 *   **At-Least-Once Delivery**: Uses NATS JetStream to ensure zero data loss even during network outages.
 *   **Flexible Adapters**: Easily write collectors in Python for Modbus, OPC-UA, or custom protocols.
 
-## 🏁 Quick Start
+## Quick Start
 
 ### 1. Installation
 Download the latest release and run the installer:
@@ -59,7 +59,7 @@ async def main():
 asyncio.run(main())
 ```
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph LR
@@ -70,7 +70,7 @@ graph LR
     Telegraf -->|Write| VM[VictoriaMetrics]
 ```
 
-## 🔌 Integrations
+## Integrations
 
 ### Data Inputs
 *   **Python SDK**: Custom adapters for any sensor.
@@ -81,7 +81,7 @@ graph LR
 *   **InfluxDB**: v2 API compatible.
 *   **NATS**: Raw stream access for other microservices.
 
-## 🗺️ Roadmap
+## Roadmap
 
 We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
 
@@ -92,11 +92,11 @@ We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
     *   Relationship-based control (Ontology).
     *   Automated sequences and conditional triggers.
 
-## 📚 Documentation
+## Documentation
 
 *   **[User Guide](docs/USER_GUIDE.md)**: Detailed installation, configuration, and monitoring.
 *   **[Developer Guide](docs/DEVELOPMENT.md)**: Building from source, contributing, and architecture details.
 
-## 📄 License
+## LICENSE
 
-MIT License. See [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
