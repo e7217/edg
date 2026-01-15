@@ -1,0 +1,31 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          release-type: go
+          package-name: edg
+
+      # The logic below will be executed when the release is created
+      - name: Checkout code
+        if: ${{ steps.release.outputs.release_created }}
+        uses: actions/checkout@v4
+
+      - name: Tag created
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          echo "Release created: ${{ steps.release.outputs.tag_name }}"
+          echo "This will trigger the release.yml workflow to build artifacts"
