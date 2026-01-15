@@ -3,7 +3,10 @@
 services:
   # VictoriaMetrics - Time series database
   edg-victoriametrics:
-    image: victoriametrics/victoria-metrics:latest
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.victoriametrics
+    image: edg-victoriametrics:${VERSION:-latest}
     container_name: edg-victoriametrics
     restart: unless-stopped
     ports:
@@ -22,8 +25,8 @@ services:
   # EDG Core - Main application
   edg-core:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.core
     image: edg-core:${VERSION:-latest}
     container_name: edg-core
     restart: unless-stopped
@@ -49,8 +52,8 @@ services:
   # Telegraf - Metrics collection agent
   edg-telegraf:
     build:
-      context: .
-      dockerfile: Dockerfile.telegraf
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.telegraf
     image: edg-telegraf:${VERSION:-latest}
     container_name: edg-telegraf
     restart: unless-stopped

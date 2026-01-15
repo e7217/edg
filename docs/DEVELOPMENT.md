@@ -62,7 +62,7 @@ wget https://dl.influxdata.com/telegraf/releases/telegraf-1.29.0_linux_amd64.tar
 tar xzf telegraf-1.29.0_linux_amd64.tar.gz
 
 # Run with project config
-./telegraf-1.29.0/usr/bin/telegraf --config ./configs/telegraf/telegraf.conf
+./telegraf-1.29.0/usr/bin/telegraf --config ./deploy/configs/telegraf/telegraf.conf
 ```
 
 **4. Send test data:**
@@ -110,8 +110,13 @@ edg/
 │   └── core/           # EDG Core main entry
 ├── internal/
 │   └── core/           # Core business logic
-├── configs/
-│   └── telegraf/       # Telegraf configuration
+├── deploy/
+│   ├── docker/         # Docker deployment files
+│   │   ├── compose.yml
+│   │   ├── Dockerfile.core
+│   │   └── Dockerfile.telegraf
+│   └── configs/        # Shared deployment configs
+│       └── telegraf/   # Telegraf configuration
 ├── scripts/
 │   └── install.sh      # Installation script
 ├── templates/          # Asset templates (optional)
