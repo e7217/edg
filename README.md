@@ -97,6 +97,6 @@ We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
 *   **[User Guide](docs/USER_GUIDE.md)**: Detailed installation, configuration, and monitoring.
 *   **[Developer Guide](docs/DEVELOPMENT.md)**: Building from source, contributing, and architecture details.
 
-## License
+## 📚 Documentation
 
 MIT License. See [LICENSE](LICENSE) for details.
