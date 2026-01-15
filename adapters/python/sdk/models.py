@@ -71,3 +71,53 @@ class AssetData:
             result["metadata"] = self.metadata
 
         return result
+
+
+class RelationType:
+    """Relation types - Compatible with Go's RelationType constants
+
+    Maps to semantic web vocabularies:
+    - PART_OF: ssn:isPartOf (hierarchical relationship)
+    - CONNECTED_TO: sosa:isHostedBy (peer/network connection)
+    - LOCATED_IN: schema:containedInPlace (spatial containment)
+    """
+
+    PART_OF = "partOf"
+    CONNECTED_TO = "connectedTo"
+    LOCATED_IN = "locatedIn"
+
+
+@dataclass
+class AssetRelation:
+    """Asset relation - Compatible with Go's AssetRelation
+
+    Attributes:
+        id: Relation identifier
+        source_asset_id: Source asset ID
+        target_asset_id: Target asset ID
+        relation_type: Type of relation (partOf, connectedTo, locatedIn)
+        created_at: Timestamp (milliseconds, epoch)
+        metadata: Additional metadata
+    """
+
+    id: str
+    source_asset_id: str
+    target_asset_id: str
+    relation_type: str
+    created_at: int
+    metadata: dict[str, str] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization"""
+        result: dict[str, Any] = {
+            "id": self.id,
+            "source_asset_id": self.source_asset_id,
+            "target_asset_id": self.target_asset_id,
+            "relation_type": self.relation_type,
+            "created_at": self.created_at,
+        }
+
+        if self.metadata:
+            result["metadata"] = self.metadata
+
+        return result

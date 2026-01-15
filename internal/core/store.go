@@ -29,6 +29,12 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("failed to open DB: %w", err)
 	}
 
+	// Enable foreign key constraints
+	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
 	store := &Store{db: db}
 	if err := store.init(); err != nil {
 		db.Close()
@@ -50,6 +56,21 @@ func (s *Store) init() error {
 	);
 	CREATE INDEX IF NOT EXISTS idx_assets_name ON assets(name);
 	CREATE INDEX IF NOT EXISTS idx_assets_template ON assets(template_name);
+
+	CREATE TABLE IF NOT EXISTS asset_relations (
+		id TEXT PRIMARY KEY,
+		source_asset_id TEXT NOT NULL,
+		target_asset_id TEXT NOT NULL,
+		relation_type TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		metadata TEXT,
+		FOREIGN KEY (source_asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+		FOREIGN KEY (target_asset_id) REFERENCES assets(id) ON DELETE CASCADE,
+		UNIQUE (source_asset_id, target_asset_id, relation_type)
+	);
+	CREATE INDEX IF NOT EXISTS idx_relations_source ON asset_relations(source_asset_id);
+	CREATE INDEX IF NOT EXISTS idx_relations_target ON asset_relations(target_asset_id);
+	CREATE INDEX IF NOT EXISTS idx_relations_type ON asset_relations(relation_type);
 	`
 	_, err := s.db.Exec(schema)
 	return err
@@ -202,4 +223,157 @@ func (s *Store) GetStats() (*StoreStats, error) {
 		TotalAssets: count,
 		LastUpdated: time.Now(),
 	}, nil
+}
+
+// ==================== AssetRelation Methods ====================
+
+// CreateRelation creates a new asset relation
+func (s *Store) CreateRelation(relation *AssetRelation) error {
+	// Validate source and target assets exist
+	sourceExists, err := s.AssetExists(relation.SourceAssetID)
+	if err != nil {
+		return fmt.Errorf("failed to check source asset: %w", err)
+	}
+	if !sourceExists {
+		return fmt.Errorf("source asset not found: %s", relation.SourceAssetID)
+	}
+
+	targetExists, err := s.AssetExists(relation.TargetAssetID)
+	if err != nil {
+		return fmt.Errorf("failed to check target asset: %w", err)
+	}
+	if !targetExists {
+		return fmt.Errorf("target asset not found: %s", relation.TargetAssetID)
+	}
+
+	// Marshal metadata
+	var metadataJSON string
+	if relation.Metadata != nil {
+		metadata, err := json.Marshal(relation.Metadata)
+		if err != nil {
+			return fmt.Errorf("failed to marshal metadata: %w", err)
+		}
+		metadataJSON = string(metadata)
+	}
+
+	// Insert relation
+	_, err = s.db.Exec(
+		`INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, created_at, metadata)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		relation.ID, relation.SourceAssetID, relation.TargetAssetID,
+		relation.RelationType, relation.CreatedAt, metadataJSON,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create relation: %w", err)
+	}
+	return nil
+}
+
+// GetRelation retrieves a relation by ID
+func (s *Store) GetRelation(id string) (*AssetRelation, error) {
+	row := s.db.QueryRow(
+		`SELECT id, source_asset_id, target_asset_id, relation_type, created_at, metadata
+		 FROM asset_relations WHERE id = ?`,
+		id,
+	)
+
+	var relation AssetRelation
+	var metadataJSON sql.NullString
+	err := row.Scan(
+		&relation.ID, &relation.SourceAssetID, &relation.TargetAssetID,
+		&relation.RelationType, &relation.CreatedAt, &metadataJSON,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get relation: %w", err)
+	}
+
+	// Unmarshal metadata if present
+	if metadataJSON.Valid && metadataJSON.String != "" {
+		json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata)
+	}
+
+	return &relation, nil
+}
+
+// GetRelationsBySourceAsset retrieves all relations from a source asset
+func (s *Store) GetRelationsBySourceAsset(assetID string) ([]*AssetRelation, error) {
+	rows, err := s.db.Query(
+		`SELECT id, source_asset_id, target_asset_id, relation_type, created_at, metadata
+		 FROM asset_relations WHERE source_asset_id = ? ORDER BY created_at DESC`,
+		assetID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query relations: %w", err)
+	}
+	defer rows.Close()
+
+	var relations []*AssetRelation
+	for rows.Next() {
+		var relation AssetRelation
+		var metadataJSON sql.NullString
+		if err := rows.Scan(
+			&relation.ID, &relation.SourceAssetID, &relation.TargetAssetID,
+			&relation.RelationType, &relation.CreatedAt, &metadataJSON,
+		); err != nil {
+			return nil, err
+		}
+
+		if metadataJSON.Valid && metadataJSON.String != "" {
+			json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata)
+		}
+
+		relations = append(relations, &relation)
+	}
+
+	return relations, nil
+}
+
+// GetRelationsByTargetAsset retrieves all relations to a target asset
+func (s *Store) GetRelationsByTargetAsset(assetID string) ([]*AssetRelation, error) {
+	rows, err := s.db.Query(
+		`SELECT id, source_asset_id, target_asset_id, relation_type, created_at, metadata
+		 FROM asset_relations WHERE target_asset_id = ? ORDER BY created_at DESC`,
+		assetID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query relations: %w", err)
+	}
+	defer rows.Close()
+
+	var relations []*AssetRelation
+	for rows.Next() {
+		var relation AssetRelation
+		var metadataJSON sql.NullString
+		if err := rows.Scan(
+			&relation.ID, &relation.SourceAssetID, &relation.TargetAssetID,
+			&relation.RelationType, &relation.CreatedAt, &metadataJSON,
+		); err != nil {
+			return nil, err
+		}
+
+		if metadataJSON.Valid && metadataJSON.String != "" {
+			json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata)
+		}
+
+		relations = append(relations, &relation)
+	}
+
+	return relations, nil
+}
+
+// DeleteRelation deletes a relation by ID
+func (s *Store) DeleteRelation(id string) error {
+	result, err := s.db.Exec(`DELETE FROM asset_relations WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete relation: %w", err)
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("relation not found: %s", id)
+	}
+	return nil
 }
