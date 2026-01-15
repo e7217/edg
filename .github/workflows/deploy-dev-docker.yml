@@ -28,15 +28,23 @@ jobs:
           # Build EDG Core
           docker build \
             --build-arg VERSION=${{ steps.version.outputs.VERSION }} \
+            -f deploy/docker/Dockerfile.core \
             -t edg-core:${{ steps.version.outputs.VERSION }} \
             -t edg-core:latest \
             .
 
           # Build Telegraf
           docker build \
-            -f Dockerfile.telegraf \
+            -f deploy/docker/Dockerfile.telegraf \
             -t edg-telegraf:${{ steps.version.outputs.VERSION }} \
             -t edg-telegraf:latest \
+            .
+
+          # Build VictoriaMetrics
+          docker build \
+            -f deploy/docker/Dockerfile.victoriametrics \
+            -t edg-victoriametrics:${{ steps.version.outputs.VERSION }} \
+            -t edg-victoriametrics:latest \
             .
 
       - name: Deploy with Docker Compose
@@ -44,10 +52,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           # Stop existing containers
-          docker compose down || true
+          docker compose -f deploy/docker/compose.yml down || true
 
           # Start services
-          docker compose up -d
+          docker compose -f deploy/docker/compose.yml up -d
 
           # Wait for services to be ready
           echo "Waiting for services to start..."
@@ -56,12 +64,12 @@ jobs:
       - name: Health check
         run: |
           echo "Checking service health..."
-          docker compose ps
+          docker compose -f deploy/docker/compose.yml ps
 
           # Check edg-core health (NATS monitoring endpoint)
           docker exec edg-core curl -f http://localhost:8222/healthz || {
             echo "Health check failed!"
-            docker compose logs edg-core
+            docker compose -f deploy/docker/compose.yml logs edg-core
             exit 1
           }
 
@@ -71,13 +79,13 @@ jobs:
         if: always()
         run: |
           echo "=== EDG Core Logs ==="
-          docker compose logs --tail=50 edg-core
+          docker compose -f deploy/docker/compose.yml logs --tail=50 edg-core
 
           echo "=== VictoriaMetrics Logs ==="
-          docker compose logs --tail=20 edg-victoriametrics
+          docker compose -f deploy/docker/compose.yml logs --tail=20 edg-victoriametrics
 
           echo "=== Telegraf Logs ==="
-          docker compose logs --tail=20 edg-telegraf
+          docker compose -f deploy/docker/compose.yml logs --tail=20 edg-telegraf
 
       - name: Cleanup old images
         if: success()
@@ -91,6 +99,13 @@ jobs:
 
           # Keep only last 3 versions of edg-telegraf
           docker images edg-telegraf --format "{{.ID}} {{.Tag}}" | \
+            grep -v latest | \
+            tail -n +4 | \
+            awk '{print $1}' | \
+            xargs -r docker rmi || true
+
+          # Keep only last 3 versions of edg-victoriametrics
+          docker images edg-victoriametrics --format "{{.ID}} {{.Tag}}" | \
             grep -v latest | \
             tail -n +4 | \
             awk '{print $1}' | \

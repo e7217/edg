@@ -1,0 +1,4 @@
+FROM victoriametrics/victoria-metrics:v1.96.0
+
+# Using official image with pinned version for consistency
+# No additional customization needed - all configuration via command args
