@@ -71,8 +71,20 @@ type Response struct {
 	Error   string      `json:"error,omitempty"`
 }
 
+// marshalResponse marshals response with fallback on error
+func (h *MetaHandler) marshalResponse(resp Response) []byte {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		log.Printf("[Meta] Failed to marshal response: %v", err)
+		// Send fallback error response instead of corrupted data
+		errorResp := Response{Success: false, Error: "internal error: response marshal failed"}
+		data, _ = json.Marshal(errorResp)
+	}
+	return data
+}
+
 func (h *MetaHandler) reply(msg *nats.Msg, resp Response) {
-	data, _ := json.Marshal(resp)
+	data := h.marshalResponse(resp)
 	msg.Respond(data)
 }
 
