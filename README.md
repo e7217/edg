@@ -99,4 +99,4 @@ We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
 
 ## 📚 Documentation
 
-MIT License. See [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
