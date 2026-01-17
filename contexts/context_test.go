@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// JSONLDContext represents the @context section of a JSON-LD document
-type JSONLDContext struct {
-	Version float64 `json:"@version"`
-	Vocab   string  `json:"@vocab"`
-	// Standard prefixes that should be defined
-	RDFS   string `json:"rdfs"`
-	RDF    string `json:"rdf"`
-	SOSA   string `json:"sosa"`
-	SSN    string `json:"ssn"`
-	QUDT   string `json:"qudt"`
-	Schema string `json:"schema"`
-	XSD    string `json:"xsd"`
-}
-
 // JSONLDDocument represents a JSON-LD document structure
 type JSONLDDocument struct {
 	Context json.RawMessage `json:"@context"`
