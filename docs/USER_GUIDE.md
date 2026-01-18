@@ -86,6 +86,7 @@ Incoming JSON from adapters:
 
 - **NATS Monitor**: http://localhost:8222
 - **VictoriaMetrics UI**: http://localhost:8428
+- **Grafana** (optional, docker-compose): http://localhost:3000
 - **Logs**:
   - EDG Core: `journalctl -u edg-core -f`
   - Telegraf: `journalctl -u edg-telegraf -f`

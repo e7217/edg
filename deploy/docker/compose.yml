@@ -73,10 +73,29 @@ services:
       timeout: 10s
       retries: 3
 
+  edg-grafana:
+    image: grafana/grafana-oss:10.2.3
+    container_name: edg-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../configs/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - edg-victoriametrics
+    networks:
+      - service-net
+
 volumes:
   vm-data:
     driver: local
   edg-data:
+    driver: local
+  grafana-data:
     driver: local
 
 networks:

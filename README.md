@@ -34,6 +34,8 @@ sudo systemctl start edg-core
 sudo systemctl start edg-telegraf
 ```
 
+If you are using docker-compose, you can also start Grafana (optional) for dashboards.
+
 ### 3. Send Data
 Use the Python SDK to send your first metric:
 
@@ -96,6 +98,14 @@ We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
 
 *   **[User Guide](docs/USER_GUIDE.md)**: Detailed installation, configuration, and monitoring.
 *   **[Developer Guide](docs/DEVELOPMENT.md)**: Building from source, contributing, and architecture details.
+
+## Grafana (Optional)
+
+Grafana is not included in the systemd-based release bundle today. If you deploy via docker-compose, you can run Grafana to visualize data stored in VictoriaMetrics.
+
+- URL: http://localhost:3000
+- Default user: `${GRAFANA_ADMIN_USER:-admin}`
+- Default password: `${GRAFANA_ADMIN_PASSWORD:-admin}`
 
 ## LICENSE
 
