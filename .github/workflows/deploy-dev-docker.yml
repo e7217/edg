@@ -47,10 +47,16 @@ jobs:
             -t edg-victoriametrics:latest \
             .
 
+          # Build Grafana
+          docker build \
+            -f deploy/docker/Dockerfile.grafana \
+            -t edg-grafana:${{ steps.version.outputs.VERSION }} \
+            -t edg-grafana:latest \
+            .
+
       - name: Deploy with Docker Compose
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
-          GRAFANA_PROVISIONING_PATH: ${{ github.workspace }}/deploy/configs/grafana/provisioning
         run: |
           cd deploy/docker
 
@@ -79,6 +85,18 @@ jobs:
           }
 
           echo "✅ Deployment successful!"
+
+      - name: Verify Grafana provisioning
+        run: |
+          echo "=== Verifying Grafana Provisioning ==="
+
+          echo "Checking provisioning files inside Grafana container:"
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/datasources/
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/dashboards/
+
+          echo ""
+          echo "✅ Grafana provisioning verification complete!"
 
       - name: Show logs
         if: always()
@@ -116,6 +134,13 @@ jobs:
 
           # Keep only last 3 versions of edg-victoriametrics
           docker images edg-victoriametrics --format "{{.ID}} {{.Tag}}" | \
+            grep -v latest | \
+            tail -n +4 | \
+            awk '{print $1}' | \
+            xargs -r docker rmi || true
+
+          # Keep only last 3 versions of edg-grafana
+          docker images edg-grafana --format "{{.ID}} {{.Tag}}" | \
             grep -v latest | \
             tail -n +4 | \
             awk '{print $1}' | \

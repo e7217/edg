@@ -1,0 +1,7 @@
+FROM grafana/grafana-oss:10.2.3
+
+# Copy provisioning configuration
+COPY deploy/configs/grafana/provisioning /etc/grafana/provisioning
+
+# Grafana runs as user 472 (grafana) by default
+USER grafana

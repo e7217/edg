@@ -74,7 +74,10 @@ services:
       retries: 3
 
   edg-grafana:
-    image: grafana/grafana-oss:10.2.3
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.grafana
+    image: edg-grafana:${VERSION:-latest}
     container_name: edg-grafana
     restart: unless-stopped
     ports:
@@ -84,7 +87,6 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
       - grafana-data:/var/lib/grafana
-      - ${GRAFANA_PROVISIONING_PATH:-../configs/grafana/provisioning}:/etc/grafana/provisioning:ro
     depends_on:
       - edg-victoriametrics
     networks:
