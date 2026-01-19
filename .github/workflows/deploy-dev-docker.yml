@@ -2,7 +2,7 @@ name: Deploy to Dev Server (Docker)
 
 on:
   push:
-    branches: [mai, fix/*]
+    branches: [main, fix/*]
   workflow_dispatch:
 
 jobs:
@@ -23,8 +23,8 @@ jobs:
           echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
           echo "PWD: $(pwd)"
           echo "Repository: ${{ github.repository }}"
-          echo "Runner work path: $(dirname $(dirname $GITHUB_WORKSPACE))"
-          ls -la $(dirname $GITHUB_WORKSPACE)
+          echo "Checking if /srv/actions-runner/_work/edg/edg exists:"
+          ls -la /srv/actions-runner/_work/edg/ 2>&1 || echo "Path not accessible"
 
       - name: Set version
         id: version
@@ -63,6 +63,18 @@ jobs:
           GRAFANA_PROVISIONING_PATH: /srv/actions-runner/_work/edg/edg/deploy/configs/grafana/provisioning
         run: |
           cd deploy/docker
+
+          # Debug: Print environment variables
+          echo "VERSION=$VERSION"
+          echo "GRAFANA_PROVISIONING_PATH=$GRAFANA_PROVISIONING_PATH"
+
+          # Export variables for docker compose
+          export VERSION
+          export GRAFANA_PROVISIONING_PATH
+
+          # Debug: Check what docker compose will use
+          echo "=== Docker Compose Config ==="
+          docker compose config | grep -A 5 "edg-grafana:" | grep -A 3 "volumes:"
 
           # Stop existing containers
           docker compose down || true
