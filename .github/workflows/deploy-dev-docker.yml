@@ -17,15 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Print path information
-        run: |
-          echo "=== Path Information ==="
-          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
-          echo "PWD: $(pwd)"
-          echo "Repository: ${{ github.repository }}"
-          echo "Checking if /srv/actions-runner/_work/edg/edg exists:"
-          ls -la /srv/actions-runner/_work/edg/ 2>&1 || echo "Path not accessible"
-
       - name: Set version
         id: version
         run: |
@@ -57,24 +48,18 @@ jobs:
             -t edg-victoriametrics:latest \
             .
 
+          # Build Grafana
+          docker build \
+            -f deploy/docker/Dockerfile.grafana \
+            -t edg-grafana:${{ steps.version.outputs.VERSION }} \
+            -t edg-grafana:latest \
+            .
+
       - name: Deploy with Docker Compose
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
-          GRAFANA_PROVISIONING_PATH: /srv/actions-runner/_work/edg/edg/deploy/configs/grafana/provisioning
         run: |
           cd deploy/docker
-
-          # Debug: Print environment variables
-          echo "VERSION=$VERSION"
-          echo "GRAFANA_PROVISIONING_PATH=$GRAFANA_PROVISIONING_PATH"
-
-          # Export variables for docker compose
-          export VERSION
-          export GRAFANA_PROVISIONING_PATH
-
-          # Debug: Check what docker compose will use
-          echo "=== Docker Compose Config ==="
-          docker compose config | grep -A 5 "edg-grafana:" | grep -A 3 "volumes:"
 
           # Stop existing containers
           docker compose down || true
@@ -106,23 +91,9 @@ jobs:
         run: |
           echo "=== Verifying Grafana Provisioning ==="
 
-          echo "1. Check provisioning files on host (from container):"
-          ls -la /srv/actions-runner/_work/edg/edg/deploy/configs/grafana/provisioning/
-
-          echo ""
-          echo "2. Check Grafana container mounts:"
-          docker inspect edg-grafana --format='{{range .Mounts}}Source: {{.Source}} -> Dest: {{.Destination}}{{"\n"}}{{end}}'
-
-          echo ""
-          echo "3. Check files inside Grafana container:"
+          echo "Checking provisioning files inside Grafana container:"
           docker exec edg-grafana ls -la /etc/grafana/provisioning/
-
-          echo ""
-          echo "4. Check datasources inside container:"
           docker exec edg-grafana ls -la /etc/grafana/provisioning/datasources/
-
-          echo ""
-          echo "5. Check dashboards inside container:"
           docker exec edg-grafana ls -la /etc/grafana/provisioning/dashboards/
 
           echo ""
@@ -164,6 +135,13 @@ jobs:
 
           # Keep only last 3 versions of edg-victoriametrics
           docker images edg-victoriametrics --format "{{.ID}} {{.Tag}}" | \
+            grep -v latest | \
+            tail -n +4 | \
+            awk '{print $1}' | \
+            xargs -r docker rmi || true
+
+          # Keep only last 3 versions of edg-grafana
+          docker images edg-grafana --format "{{.ID}} {{.Tag}}" | \
             grep -v latest | \
             tail -n +4 | \
             awk '{print $1}' | \
