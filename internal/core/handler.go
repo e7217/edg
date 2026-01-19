@@ -12,16 +12,16 @@ import (
 // DataHandler handles NATS messages for asset data
 type DataHandler struct {
 	mu    sync.Mutex
-	data  []AssetData // in-memory storage (PoC)
-	store *Store      // for auto-registration
-	nc    *nats.Conn  // for publishing validated data
+	data  []AssetData            // in-memory storage (PoC)
+	store *Store                 // for auto-registration
+	js    nats.JetStreamContext  // for publishing to JetStream
 }
 
-func NewDataHandler(nc *nats.Conn, store *Store) *DataHandler {
+func NewDataHandler(js nats.JetStreamContext, store *Store) *DataHandler {
 	return &DataHandler{
 		data:  make([]AssetData, 0),
 		store: store,
-		nc:    nc,
+		js:    js,
 	}
 }
 
@@ -51,10 +51,10 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 	h.data = append(h.data, data)
 	h.mu.Unlock()
 
-	// Publish validated data to NATS for Telegraf consumption
-	if h.nc != nil {
-		if err := h.nc.Publish("platform.data.validated", msg.Data); err != nil {
-			log.Printf("[Core] Failed to publish validated data: %v", err)
+	// Publish validated data to JetStream for persistence
+	if h.js != nil {
+		if _, err := h.js.Publish("platform.data.validated", msg.Data); err != nil {
+			log.Printf("[Core] Failed to publish to JetStream: %v", err)
 		}
 	}
 

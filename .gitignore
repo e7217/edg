@@ -45,12 +45,12 @@ edg-core
 data/
 tmp/
 
-### telegraf ###
-telegraf*/
+# ### telegraf ###
+# telegraf*/
 
-### victoriametrics ###
-victoria-metrics-data/
-victoria-metrics*
+# ### victoriametrics ###
+# victoria-metrics-data/
+# victoria-metrics*
 
 # AI
 .agent/
