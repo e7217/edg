@@ -109,7 +109,7 @@ func main() {
 	log.Printf("[Core] Loaded %d templates", loader.Count())
 
 	// 6. Create handlers and subscribe
-	dataHandler := core.NewDataHandler(nc, store)
+	dataHandler := core.NewDataHandler(js, store)
 	metaHandler := core.NewMetaHandler(store, loader)
 
 	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
