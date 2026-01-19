@@ -17,6 +17,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Print path information
+        run: |
+          echo "=== Path Information ==="
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          echo "PWD: $(pwd)"
+          echo "Repository: ${{ github.repository }}"
+          echo "Runner work path: $(dirname $(dirname $GITHUB_WORKSPACE))"
+          ls -la $(dirname $GITHUB_WORKSPACE)
+
       - name: Set version
         id: version
         run: |
