@@ -84,7 +84,7 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
     volumes:
       - grafana-data:/var/lib/grafana
-      - ../configs/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${GRAFANA_PROVISIONING_PATH:-../configs/grafana/provisioning}:/etc/grafana/provisioning:ro
     depends_on:
       - edg-victoriametrics
     networks:
