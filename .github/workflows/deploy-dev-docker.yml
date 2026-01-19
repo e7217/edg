@@ -2,7 +2,7 @@ name: Deploy to Dev Server (Docker)
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/*]
   workflow_dispatch:
 
 jobs:
