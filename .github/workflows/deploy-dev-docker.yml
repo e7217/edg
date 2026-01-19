@@ -80,6 +80,29 @@ jobs:
 
           echo "✅ Deployment successful!"
 
+      - name: Debug Grafana provisioning
+        run: |
+          echo "=== Debugging Grafana Provisioning ==="
+
+          echo "1. Check provisioning files on host:"
+          ls -la /srv/actions-runner/_work/edg/edg/deploy/configs/grafana/provisioning/ || echo "Directory not found on host!"
+
+          echo ""
+          echo "2. Check Grafana container mounts:"
+          docker inspect edg-grafana --format='{{range .Mounts}}Source: {{.Source}} -> Dest: {{.Destination}}{{"\n"}}{{end}}'
+
+          echo ""
+          echo "3. Check files inside Grafana container:"
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/ || echo "Provisioning directory not mounted!"
+
+          echo ""
+          echo "4. Check datasources inside container:"
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/datasources/ || echo "Datasources directory not found!"
+
+          echo ""
+          echo "5. Check dashboards inside container:"
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/dashboards/ || echo "Dashboards directory not found!"
+
       - name: Show logs
         if: always()
         run: |
