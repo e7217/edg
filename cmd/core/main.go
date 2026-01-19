@@ -37,8 +37,10 @@ func main() {
 	}
 	// 1. Embedded NATS Server configuration
 	opts := &server.Options{
-		Port:     4222,
-		HTTPPort: 8222, // for monitoring
+		Port:      4222,
+		HTTPPort:  8222, // for monitoring
+		JetStream: true, // Enable JetStream for message persistence
+		StoreDir:  "./data/jetstream",
 	}
 
 	ns, err := server.NewServer(opts)
@@ -66,6 +68,31 @@ func main() {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
 	defer nc.Close()
+
+	// 3.1. Initialize JetStream context
+	js, err := nc.JetStream()
+	if err != nil {
+		log.Fatalf("Failed to create JetStream context: %v", err)
+	}
+
+	// 3.2. Create JetStream stream for platform data
+	streamName := "PLATFORM_DATA"
+	_, err = js.StreamInfo(streamName)
+	if err != nil {
+		// Stream doesn't exist, create it
+		_, err = js.AddStream(&nats.StreamConfig{
+			Name:     streamName,
+			Subjects: []string{"platform.data.>"},
+			Storage:  nats.FileStorage,
+			MaxAge:   7 * 24 * time.Hour, // 7 days retention
+		})
+		if err != nil {
+			log.Fatalf("Failed to create JetStream stream: %v", err)
+		}
+		log.Printf("[Core] Created JetStream stream: %s", streamName)
+	} else {
+		log.Printf("[Core] JetStream stream already exists: %s", streamName)
+	}
 
 	// 4. Initialize metadata store
 	store, err := core.NewStore("./data/metadata.db")
