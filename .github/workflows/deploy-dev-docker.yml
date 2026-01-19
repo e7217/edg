@@ -2,7 +2,7 @@ name: Deploy to Dev Server (Docker)
 
 on:
   push:
-    branches: [main, feat/*, fix/*]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -12,6 +12,7 @@ jobs:
       image: docker:24-cli
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
+        - /srv/actions-runner/_work:/srv/actions-runner/_work
 
     steps:
       - uses: actions/checkout@v4
@@ -50,7 +51,7 @@ jobs:
       - name: Deploy with Docker Compose
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
-          GRAFANA_PROVISIONING_PATH: ${{ github.workspace }}/deploy/configs/grafana/provisioning
+          GRAFANA_PROVISIONING_PATH: /srv/actions-runner/_work/edg/edg/deploy/configs/grafana/provisioning
         run: |
           cd deploy/docker
 
@@ -80,12 +81,12 @@ jobs:
 
           echo "✅ Deployment successful!"
 
-      - name: Debug Grafana provisioning
+      - name: Verify Grafana provisioning
         run: |
-          echo "=== Debugging Grafana Provisioning ==="
+          echo "=== Verifying Grafana Provisioning ==="
 
-          echo "1. Check provisioning files on host:"
-          ls -la /srv/actions-runner/_work/edg/edg/deploy/configs/grafana/provisioning/ || echo "Directory not found on host!"
+          echo "1. Check provisioning files on host (from container):"
+          ls -la /srv/actions-runner/_work/edg/edg/deploy/configs/grafana/provisioning/
 
           echo ""
           echo "2. Check Grafana container mounts:"
@@ -93,15 +94,18 @@ jobs:
 
           echo ""
           echo "3. Check files inside Grafana container:"
-          docker exec edg-grafana ls -la /etc/grafana/provisioning/ || echo "Provisioning directory not mounted!"
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/
 
           echo ""
           echo "4. Check datasources inside container:"
-          docker exec edg-grafana ls -la /etc/grafana/provisioning/datasources/ || echo "Datasources directory not found!"
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/datasources/
 
           echo ""
           echo "5. Check dashboards inside container:"
-          docker exec edg-grafana ls -la /etc/grafana/provisioning/dashboards/ || echo "Dashboards directory not found!"
+          docker exec edg-grafana ls -la /etc/grafana/provisioning/dashboards/
+
+          echo ""
+          echo "✅ Grafana provisioning verification complete!"
 
       - name: Show logs
         if: always()
