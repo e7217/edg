@@ -12,7 +12,6 @@ jobs:
       image: docker:24-cli
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
-        - /srv/actions-runner/_work:/srv/actions-runner/_work
 
     steps:
       - uses: actions/checkout@v4
