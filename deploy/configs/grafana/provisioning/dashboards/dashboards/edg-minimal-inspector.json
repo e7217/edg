@@ -39,7 +39,7 @@
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
           "expr": "$metric",
-          "legendFormat": "{{__name__}}",
+          "legendFormat": "{{asset_id}} / {{name}} ({{unit}})",
           "range": true,
           "refId": "A"
         }
