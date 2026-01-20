@@ -4,7 +4,26 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class DeviceState(Enum):
+    """Device connection state
+
+    States:
+        DISCONNECTED: Device is not connected
+        CONNECTING: Device is attempting to connect
+        CONNECTED: Device is connected and operational
+        RECONNECTING: Device is attempting to reconnect after disconnection
+        ERROR: Device encountered an error
+    """
+
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    RECONNECTING = "reconnecting"
+    ERROR = "error"
 
 
 @dataclass
