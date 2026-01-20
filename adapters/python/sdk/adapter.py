@@ -37,6 +37,9 @@ class BaseAdapter(ABC):
         nats_url: str = "nats://localhost:4222",
         collect_interval: float = 1.0,
         metadata: dict[str, str] | None = None,
+        nats_max_reconnect_attempts: int = 60,
+        nats_reconnect_time_wait: float = 2.0,
+        nats_connect_timeout: float = 2.0,
     ):
         """
         Args:
@@ -44,13 +47,22 @@ class BaseAdapter(ABC):
             nats_url: NATS server URL
             collect_interval: Collection interval (seconds)
             metadata: Additional metadata
+            nats_max_reconnect_attempts: NATS max reconnection attempts (default: 60)
+            nats_reconnect_time_wait: NATS reconnect wait time in seconds (default: 2.0)
+            nats_connect_timeout: NATS connection timeout in seconds (default: 2.0)
         """
         self.asset_id = asset_id
         self.nats_url = nats_url
         self.collect_interval = collect_interval
         self.metadata = metadata
 
-        self._client = NATSClientWrapper(url=nats_url, name=asset_id)
+        self._client = NATSClientWrapper(
+            url=nats_url,
+            name=asset_id,
+            max_reconnect_attempts=nats_max_reconnect_attempts,
+            reconnect_time_wait=nats_reconnect_time_wait,
+            connect_timeout=nats_connect_timeout,
+        )
         self._running = False
         self._task: asyncio.Task[Any] | None = None
         self._device_state = DeviceState.DISCONNECTED

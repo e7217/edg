@@ -36,14 +36,23 @@ class NATSClientWrapper:
         self,
         url: str = "nats://localhost:4222",
         name: str | None = None,
+        max_reconnect_attempts: int = 60,
+        reconnect_time_wait: float = 2.0,
+        connect_timeout: float = 2.0,
     ):
         """
         Args:
             url: NATS server URL
             name: Client name (for logging)
+            max_reconnect_attempts: Maximum reconnection attempts (default: 60)
+            reconnect_time_wait: Time to wait between reconnect attempts in seconds (default: 2.0)
+            connect_timeout: Connection timeout in seconds (default: 2.0)
         """
         self.url = url
         self.name = name
+        self.max_reconnect_attempts = max_reconnect_attempts
+        self.reconnect_time_wait = reconnect_time_wait
+        self.connect_timeout = connect_timeout
         self._nc: NATSClient | None = None
 
     @property
@@ -60,6 +69,9 @@ class NATSClientWrapper:
             self._nc = await nats.connect(
                 self.url,
                 name=self.name,
+                max_reconnect_attempts=self.max_reconnect_attempts,
+                reconnect_time_wait=self.reconnect_time_wait,
+                connect_timeout=self.connect_timeout,
                 error_cb=self._error_callback,
                 disconnected_cb=self._disconnected_callback,
                 reconnected_cb=self._reconnected_callback,

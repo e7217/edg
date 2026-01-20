@@ -81,6 +81,32 @@ class MyDeviceAdapter(BaseAdapter):
 - Other exceptions are logged but not retried
 - Automatic backoff with 10% jitter to prevent synchronized retries
 
+### NATS Connection Configuration
+
+Configure NATS connection behavior with reconnection and timeout settings:
+
+```python
+adapter = MySensorAdapter(
+    asset_id="sensor-001",
+    nats_url="nats://localhost:4222",
+    nats_max_reconnect_attempts=60,     # Max reconnection attempts (default: 60)
+    nats_reconnect_time_wait=2.0,       # Wait time between reconnects in seconds (default: 2.0)
+    nats_connect_timeout=2.0,           # Connection timeout in seconds (default: 2.0)
+)
+```
+
+**NATS Connection Features:**
+- **Automatic Reconnection**: NATS client automatically reconnects on connection loss
+- **Configurable Retry**: Adjust max attempts and wait time between retries
+- **Connection Timeout**: Control how long to wait for initial connection
+- **Callbacks**: Automatic logging on disconnect/reconnect events
+
+**Default Behavior:**
+- Maximum 60 reconnection attempts
+- 2 second wait between reconnection attempts
+- 2 second connection timeout
+- Automatic reconnection on network interruptions
+
 ## Examples
 
 ### Simple Usage (No Device Recovery)
