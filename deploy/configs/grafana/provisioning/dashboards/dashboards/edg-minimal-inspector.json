@@ -25,6 +25,7 @@
     {
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
       "id": 1,
+      "maxDataPoints": 10000,
       "options": {
         "legend": {
           "calcs": ["mean", "last"],
@@ -39,7 +40,8 @@
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "editorMode": "code",
           "expr": "$metric",
-          "legendFormat": "{{__name__}}",
+          "interval": "10ms",
+          "legendFormat": "{{asset_id}} / {{name}} ({{unit}})",
           "range": true,
           "refId": "A"
         }
