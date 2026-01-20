@@ -37,7 +37,13 @@ class BackoffStrategy:
             base: Base delay in seconds
             max_delay: Maximum delay in seconds
             jitter: Jitter factor (0.0 to 1.0) for randomness
+
+        Raises:
+            ValueError: If jitter is not in range [0.0, 1.0]
         """
+        if not 0.0 <= jitter <= 1.0:
+            raise ValueError(f"jitter must be between 0.0 and 1.0, got {jitter}")
+
         self.base = base
         self.max_delay = max_delay
         self.jitter = jitter

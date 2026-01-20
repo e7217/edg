@@ -72,6 +72,26 @@ class TestBackoffStrategyWithJitter:
 class TestBackoffStrategyEdgeCases:
     """Test edge cases and validation"""
 
+    def test_jitter_parameter_validation_negative(self):
+        """Jitter parameter must be >= 0.0"""
+        with pytest.raises(ValueError, match="jitter must be between 0.0 and 1.0"):
+            BackoffStrategy(base=1.0, max_delay=60.0, jitter=-0.1)
+
+    def test_jitter_parameter_validation_above_one(self):
+        """Jitter parameter must be <= 1.0"""
+        with pytest.raises(ValueError, match="jitter must be between 0.0 and 1.0"):
+            BackoffStrategy(base=1.0, max_delay=60.0, jitter=1.5)
+
+    def test_jitter_parameter_validation_boundary_zero(self):
+        """Jitter parameter accepts 0.0"""
+        backoff = BackoffStrategy(base=1.0, max_delay=60.0, jitter=0.0)
+        assert backoff.jitter == 0.0
+
+    def test_jitter_parameter_validation_boundary_one(self):
+        """Jitter parameter accepts 1.0"""
+        backoff = BackoffStrategy(base=1.0, max_delay=60.0, jitter=1.0)
+        assert backoff.jitter == 1.0
+
     def test_backoff_with_max_delay_smaller_than_base(self):
         """max_delay smaller than base should clamp to max_delay"""
         backoff = BackoffStrategy(base=10.0, max_delay=5.0)

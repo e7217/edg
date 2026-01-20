@@ -210,14 +210,15 @@ class BaseAdapter(ABC):
 
                 # Mark as connected
                 self._device_connected = True
+                was_reconnecting = self._retry_count > 0  # Save state before reset
                 self._retry_count = 0
                 await self._set_device_state(DeviceState.CONNECTED)
 
                 # Call appropriate event hook
-                if self._retry_count == 0:
-                    await self.on_device_connected()
-                else:
+                if was_reconnecting:
                     await self.on_device_reconnected()
+                else:
+                    await self.on_device_connected()
 
                 return
 
@@ -255,8 +256,8 @@ class BaseAdapter(ABC):
             try:
                 await self._ensure_device_connected()
             except DeviceError:
-                # Max retries exceeded, error state already set
-                pass
+                # Max retries exceeded, reset retry count for next attempt
+                self._retry_count = 0
         else:
             # Non-device errors are logged but not retried
             logger.error(f"Non-device error in collection: {error}")

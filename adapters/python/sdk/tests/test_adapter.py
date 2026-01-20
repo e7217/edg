@@ -1,11 +1,9 @@
 """Tests for BaseAdapter"""
 
 import pytest
-import asyncio
 
-from sdk.adapter import BaseAdapter
-from sdk.models import DeviceState, TagValue
-from sdk.exceptions import DeviceConnectionError, DeviceTimeoutError
+from sdk.models import DeviceState
+from sdk.exceptions import DeviceConnectionError
 
 
 class TestAdapterDeviceState:

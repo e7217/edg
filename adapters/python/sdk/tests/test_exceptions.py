@@ -4,8 +4,6 @@ import pytest
 
 from sdk.exceptions import (
     SDKError,
-    ConnectionError,
-    PublishError,
     DeviceError,
     DeviceConnectionError,
     DeviceTimeoutError,
