@@ -37,7 +37,7 @@ class BaseAdapter(ABC):
         nats_url: str = "nats://localhost:4222",
         collect_interval: float = 1.0,
         metadata: dict[str, str] | None = None,
-        nats_max_reconnect_attempts: int = 60,
+        nats_max_reconnect_attempts: int = -1,
         nats_reconnect_time_wait: float = 2.0,
         nats_connect_timeout: float = 2.0,
     ):
@@ -47,7 +47,7 @@ class BaseAdapter(ABC):
             nats_url: NATS server URL
             collect_interval: Collection interval (seconds)
             metadata: Additional metadata
-            nats_max_reconnect_attempts: NATS max reconnection attempts (default: 60)
+            nats_max_reconnect_attempts: NATS max reconnection attempts (default: -1 for unlimited)
             nats_reconnect_time_wait: NATS reconnect wait time in seconds (default: 2.0)
             nats_connect_timeout: NATS connection timeout in seconds (default: 2.0)
         """

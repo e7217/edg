@@ -89,23 +89,28 @@ Configure NATS connection behavior with reconnection and timeout settings:
 adapter = MySensorAdapter(
     asset_id="sensor-001",
     nats_url="nats://localhost:4222",
-    nats_max_reconnect_attempts=60,     # Max reconnection attempts (default: 60)
+    nats_max_reconnect_attempts=-1,     # Unlimited reconnection attempts (default: -1)
     nats_reconnect_time_wait=2.0,       # Wait time between reconnects in seconds (default: 2.0)
     nats_connect_timeout=2.0,           # Connection timeout in seconds (default: 2.0)
 )
 ```
 
 **NATS Connection Features:**
-- **Automatic Reconnection**: NATS client automatically reconnects on connection loss
+- **Unlimited Reconnection**: Continuously retries connection on network loss (default)
 - **Configurable Retry**: Adjust max attempts and wait time between retries
 - **Connection Timeout**: Control how long to wait for initial connection
 - **Callbacks**: Automatic logging on disconnect/reconnect events
 
 **Default Behavior:**
-- Maximum 60 reconnection attempts
+- **Unlimited reconnection attempts** (-1 = retry forever, suitable for long-running adapters)
 - 2 second wait between reconnection attempts
 - 2 second connection timeout
 - Automatic reconnection on network interruptions
+
+**Production Recommendation:**
+- Keep default `-1` for unlimited reconnection (adapters should always reconnect)
+- Set finite limit only for testing or temporary adapters
+- Use `nats_reconnect_time_wait` to control backoff between retries
 
 ## Examples
 
