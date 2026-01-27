@@ -1,9 +1,13 @@
 # EDG Platform
 
+<div align="center">
+<img src="https://github.com/user-attachments/assets/ec0ec2c0-3fa1-4ab1-bced-ed4ad549dffe" width="30%" alt="edge (1)">
+</div>
+
 > **Industrial Edge Data Gateway**
 > 
 > High-performance data ingestion, validation, and storage platform for IIoT.
-
+    
 ## Why EDG?
 
 *   **Lightweight & Fast**: Built with Go and NATS for ultra-low latency.
