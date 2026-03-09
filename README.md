@@ -67,6 +67,11 @@ asyncio.run(main())
 
 ## Architecture
 
+![EDG Platform Architecture](docs/flow.drawio.png)
+
+<details>
+<summary>Mermaid</summary>
+
 ```mermaid
 graph LR
     Sensor[Sensor] -->|Python Adapter| NATS1[NATS: Ingest]
@@ -75,6 +80,8 @@ graph LR
     NATS2 -->|Consumer| Telegraf
     Telegraf -->|Write| VM[VictoriaMetrics]
 ```
+
+</details>
 
 ## Integrations
 
