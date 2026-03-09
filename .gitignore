@@ -58,3 +58,4 @@ tmp/
 .agent/
 .serena/
 .claude/
+.agents/
