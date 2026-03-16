@@ -1,13 +1,19 @@
 # EDG Platform
 
+![Status](https://img.shields.io/badge/status-pre--alpha-orange)
+
 <div align="center">
 <img src="https://github.com/user-attachments/assets/ec0ec2c0-3fa1-4ab1-bced-ed4ad549dffe" width="30%" alt="edge (1)">
 </div>
 
 > **Industrial Edge Data Gateway**
 > 
-> High-performance data ingestion, validation, and storage platform for IIoT.
-    
+> Low-overhead, high-performance edge gateway for industrial data ingestion, validation, and storage.
+
+> [!WARNING]
+> EDG is in early development and is not yet production-ready.
+> APIs, configuration, and deployment workflows may change without notice.
+
 ## Why EDG?
 
 *   **Lightweight & Fast**: Built with Go and NATS for ultra-low latency.
