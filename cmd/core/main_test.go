@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -83,5 +84,27 @@ func TestVersionVariables(t *testing.T) {
 				t.Errorf("Expected %q to have a default value", tt.name)
 			}
 		})
+	}
+}
+
+func TestDiscoverConfigPathFindsDevConfig(t *testing.T) {
+	if _, err := os.Stat("/opt/edg/config.yaml"); err == nil {
+		t.Skip("/opt/edg/config.yaml exists on this machine")
+	}
+
+	configPath := filepath.Join("deploy", "configs", "core", "config.dev.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		t.Fatalf("failed to create test config directory: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll("deploy")
+	})
+
+	if err := os.WriteFile(configPath, []byte("nats:\n  port: 4222\n"), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	if got := discoverConfigPath(); got != configPath {
+		t.Fatalf("discoverConfigPath() = %q, want %q", got, configPath)
 	}
 }

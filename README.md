@@ -17,7 +17,7 @@
 ## Why EDG?
 
 *   **Lightweight & Fast**: Built with Go and NATS for ultra-low latency.
-*   **Reliable**: Built-in data validation and auto-registration of assets.
+*   **Reliable**: Built-in data validation, auto-registration of assets, and documented JetStream durability boundaries.
 *   **Plug & Play**: Simple Python adapters for reading any sensor data.
 *   **Time-Series Ready**: Seamless integration with VictoriaMetrics/InfluxDB via Telegraf.
 
@@ -25,7 +25,7 @@
 
 *   **Automatic Asset Registration**: Device discovery and metadata registration without manual configuration.
 *   **Data Validation**: Enforces schema and quality checks at the edge before data enters your storage.
-*   **At-Least-Once Delivery**: Uses NATS JetStream to ensure zero data loss even during network outages.
+*   **At-Least-Once Delivery**: Uses NATS JetStream for durable delivery after core publish acknowledgement. See [ADR 0001](docs/adr/0001-data-plane-reliability.md) for the exact reliability boundary.
 *   **Flexible Adapters**: Easily write collectors in Python for Modbus, OPC-UA, or custom protocols.
 
 ## Quick Start
@@ -115,6 +115,7 @@ We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
 
 *   **[User Guide](docs/USER_GUIDE.md)**: Detailed installation, configuration, and monitoring.
 *   **[Developer Guide](docs/DEVELOPMENT.md)**: Building from source, contributing, and architecture details.
+*   **[Architecture Decisions](docs/adr/README.md)**: Runtime and reliability decisions.
 
 ## Grafana (Optional)
 

@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"expvar"
 	"testing"
 	"time"
 
@@ -253,4 +254,50 @@ func TestHandleAssetData_JetStreamPublishError(t *testing.T) {
 
 	// Data should still be stored in memory
 	assert.Equal(t, 1, handler.GetDataCount())
+}
+
+func TestHandleAssetData_PublishErrorDeadLettersMessage(t *testing.T) {
+	_, _, js := startTestNATSServer(t, true)
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "DLQ_STREAM",
+		Subjects: []string{"platform.data.deadletter"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	handler := NewDataHandler(js, nil)
+	beforePublishFailures := expvar.Get("edg_core_jetstream_publish_failures").(*expvar.Int).Value()
+	beforeDeadLetters := expvar.Get("edg_core_jetstream_dead_letters").(*expvar.Int).Value()
+
+	data := &AssetData{
+		AssetID:   "sensor-001",
+		Timestamp: 1234567890,
+		Values:    []TagValue{{Name: "temp", Number: new(float64)}},
+	}
+
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{
+		Subject: "platform.data.asset",
+		Data:    jsonData,
+	})
+
+	assert.Equal(t, beforePublishFailures+1, expvar.Get("edg_core_jetstream_publish_failures").(*expvar.Int).Value())
+	assert.Equal(t, beforeDeadLetters+1, expvar.Get("edg_core_jetstream_dead_letters").(*expvar.Int).Value())
+
+	sub, err := js.PullSubscribe("platform.data.deadletter", "deadletter-audit")
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+
+	msgs, err := sub.Fetch(1, nats.MaxWait(2*time.Second))
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+
+	var envelope DeadLetterMessage
+	require.NoError(t, json.Unmarshal(msgs[0].Data, &envelope))
+	assert.Equal(t, "platform.data.asset", envelope.OriginalSubject)
+	assert.Equal(t, "platform.data.validated", envelope.TargetSubject)
+	assert.JSONEq(t, string(jsonData), string(envelope.Payload))
 }

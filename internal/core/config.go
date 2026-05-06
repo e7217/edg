@@ -1,0 +1,277 @@
+package core
+
+import (
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/nats-io/nats.go"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	DefaultValidatedDataSubject = "platform.data.validated"
+	DefaultDeadLetterSubject    = "platform.data.deadletter"
+)
+
+// CoreConfig contains runtime settings for the embedded core process.
+type CoreConfig struct {
+	NATS      NATSConfig      `yaml:"nats"`
+	Storage   StorageConfig   `yaml:"storage"`
+	Templates TemplateConfig  `yaml:"templates"`
+	Logging   LoggingConfig   `yaml:"logging"`
+	JetStream JetStreamConfig `yaml:"jetstream"`
+}
+
+type NATSConfig struct {
+	Port     int    `yaml:"port"`
+	HTTPPort int    `yaml:"http_port"`
+	LogLevel string `yaml:"log_level"`
+	StoreDir string `yaml:"store_dir"`
+}
+
+type StorageConfig struct {
+	MetadataDB    string `yaml:"metadata_db"`
+	DataDir       string `yaml:"data_dir"`
+	MigrationsDir string `yaml:"migrations_dir"`
+	AutoMigrate   bool   `yaml:"auto_migrate"`
+}
+
+type TemplateConfig struct {
+	Dir        string `yaml:"dir"`
+	AutoReload bool   `yaml:"auto_reload"`
+}
+
+type LoggingConfig struct {
+	Level  string `yaml:"level"`
+	Format string `yaml:"format"`
+}
+
+type JetStreamConfig struct {
+	Stream            JetStreamStreamConfig `yaml:"stream"`
+	ValidatedSubject  string                `yaml:"validated_subject"`
+	DeadLetterSubject string                `yaml:"dead_letter_subject"`
+}
+
+type JetStreamStreamConfig struct {
+	Name      string        `yaml:"name"`
+	Subjects  []string      `yaml:"subjects"`
+	Storage   string        `yaml:"storage"`
+	MaxAge    time.Duration `yaml:"max_age"`
+	MaxBytes  int64         `yaml:"max_bytes"`
+	Replicas  int           `yaml:"replicas"`
+	Retention string        `yaml:"retention"`
+	Discard   string        `yaml:"discard"`
+}
+
+// DefaultCoreConfig returns the ADR-backed reliability defaults.
+func DefaultCoreConfig() CoreConfig {
+	return CoreConfig{
+		NATS: NATSConfig{
+			Port:     4222,
+			HTTPPort: 8222,
+			LogLevel: "info",
+			StoreDir: "./data/jetstream",
+		},
+		Storage: StorageConfig{
+			MetadataDB:    "./data/metadata.db",
+			DataDir:       "./data",
+			MigrationsDir: "embedded",
+			AutoMigrate:   true,
+		},
+		Templates: TemplateConfig{
+			Dir:        "./templates",
+			AutoReload: true,
+		},
+		Logging: LoggingConfig{
+			Level:  "info",
+			Format: "text",
+		},
+		JetStream: JetStreamConfig{
+			ValidatedSubject:  DefaultValidatedDataSubject,
+			DeadLetterSubject: DefaultDeadLetterSubject,
+			Stream: JetStreamStreamConfig{
+				Name:      "PLATFORM_DATA",
+				Subjects:  []string{"platform.data.>"},
+				Storage:   "file",
+				MaxAge:    7 * 24 * time.Hour,
+				MaxBytes:  1024 * 1024 * 1024,
+				Replicas:  1,
+				Retention: "limits",
+				Discard:   "old",
+			},
+		},
+	}
+}
+
+func LoadCoreConfig(path string) (CoreConfig, error) {
+	cfg := DefaultCoreConfig()
+	if path == "" {
+		return cfg, nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cfg, fmt.Errorf("failed to read core config: %w", err)
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("failed to parse core config: %w", err)
+	}
+	cfg.applyDefaults()
+	return cfg, nil
+}
+
+func (c *CoreConfig) applyDefaults() {
+	defaults := DefaultCoreConfig()
+
+	if c.NATS.Port == 0 {
+		c.NATS.Port = defaults.NATS.Port
+	}
+	if c.NATS.HTTPPort == 0 {
+		c.NATS.HTTPPort = defaults.NATS.HTTPPort
+	}
+	if c.NATS.StoreDir == "" {
+		c.NATS.StoreDir = defaults.NATS.StoreDir
+	}
+	if c.Storage.MetadataDB == "" {
+		c.Storage.MetadataDB = defaults.Storage.MetadataDB
+	}
+	if c.Storage.DataDir == "" {
+		c.Storage.DataDir = defaults.Storage.DataDir
+	}
+	if c.Storage.MigrationsDir == "" {
+		c.Storage.MigrationsDir = defaults.Storage.MigrationsDir
+	}
+	if c.Templates.Dir == "" {
+		c.Templates.Dir = defaults.Templates.Dir
+	}
+	if c.JetStream.ValidatedSubject == "" {
+		c.JetStream.ValidatedSubject = defaults.JetStream.ValidatedSubject
+	}
+	if c.JetStream.DeadLetterSubject == "" {
+		c.JetStream.DeadLetterSubject = defaults.JetStream.DeadLetterSubject
+	}
+	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
+}
+
+func (c *JetStreamStreamConfig) applyDefaults(defaults JetStreamStreamConfig) {
+	if c.Name == "" {
+		c.Name = defaults.Name
+	}
+	if len(c.Subjects) == 0 {
+		c.Subjects = defaults.Subjects
+	}
+	if c.Storage == "" {
+		c.Storage = defaults.Storage
+	}
+	if c.MaxAge == 0 {
+		c.MaxAge = defaults.MaxAge
+	}
+	if c.MaxBytes == 0 {
+		c.MaxBytes = defaults.MaxBytes
+	}
+	if c.Replicas == 0 {
+		c.Replicas = defaults.Replicas
+	}
+	if c.Retention == "" {
+		c.Retention = defaults.Retention
+	}
+	if c.Discard == "" {
+		c.Discard = defaults.Discard
+	}
+}
+
+func (c JetStreamStreamConfig) NATSConfig() (*nats.StreamConfig, error) {
+	storage, err := parseStoragePolicy(c.Storage)
+	if err != nil {
+		return nil, err
+	}
+	retention, err := parseRetentionPolicy(c.Retention)
+	if err != nil {
+		return nil, err
+	}
+	discard, err := parseDiscardPolicy(c.Discard)
+	if err != nil {
+		return nil, err
+	}
+
+	return &nats.StreamConfig{
+		Name:      c.Name,
+		Subjects:  c.Subjects,
+		Storage:   storage,
+		MaxAge:    c.MaxAge,
+		MaxBytes:  c.MaxBytes,
+		Replicas:  c.Replicas,
+		Retention: retention,
+		Discard:   discard,
+	}, nil
+}
+
+func (c *JetStreamStreamConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Name      string   `yaml:"name"`
+		Subjects  []string `yaml:"subjects"`
+		Storage   string   `yaml:"storage"`
+		MaxAge    string   `yaml:"max_age"`
+		MaxBytes  int64    `yaml:"max_bytes"`
+		Replicas  int      `yaml:"replicas"`
+		Retention string   `yaml:"retention"`
+		Discard   string   `yaml:"discard"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	*c = JetStreamStreamConfig{
+		Name:      raw.Name,
+		Subjects:  raw.Subjects,
+		Storage:   raw.Storage,
+		MaxBytes:  raw.MaxBytes,
+		Replicas:  raw.Replicas,
+		Retention: raw.Retention,
+		Discard:   raw.Discard,
+	}
+	if raw.MaxAge != "" {
+		duration, err := time.ParseDuration(raw.MaxAge)
+		if err != nil {
+			return fmt.Errorf("invalid jetstream.stream.max_age: %w", err)
+		}
+		c.MaxAge = duration
+	}
+	return nil
+}
+
+func parseStoragePolicy(value string) (nats.StorageType, error) {
+	switch value {
+	case "", "file":
+		return nats.FileStorage, nil
+	case "memory":
+		return nats.MemoryStorage, nil
+	default:
+		return nats.FileStorage, fmt.Errorf("unsupported JetStream storage policy: %s", value)
+	}
+}
+
+func parseRetentionPolicy(value string) (nats.RetentionPolicy, error) {
+	switch value {
+	case "", "limits":
+		return nats.LimitsPolicy, nil
+	case "interest":
+		return nats.InterestPolicy, nil
+	case "workqueue":
+		return nats.WorkQueuePolicy, nil
+	default:
+		return nats.LimitsPolicy, fmt.Errorf("unsupported JetStream retention policy: %s", value)
+	}
+}
+
+func parseDiscardPolicy(value string) (nats.DiscardPolicy, error) {
+	switch value {
+	case "", "old":
+		return nats.DiscardOld, nil
+	case "new":
+		return nats.DiscardNew, nil
+	default:
+		return nats.DiscardOld, fmt.Errorf("unsupported JetStream discard policy: %s", value)
+	}
+}

@@ -1,0 +1,133 @@
+package core
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/nats-io/nats.go"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDefaultCoreConfig_JetStreamPolicy(t *testing.T) {
+	cfg := DefaultCoreConfig()
+
+	assert.Equal(t, "PLATFORM_DATA", cfg.JetStream.Stream.Name)
+	assert.Equal(t, []string{"platform.data.>"}, cfg.JetStream.Stream.Subjects)
+	assert.Equal(t, "file", cfg.JetStream.Stream.Storage)
+	assert.Equal(t, 7*24*time.Hour, cfg.JetStream.Stream.MaxAge)
+	assert.Equal(t, int64(1024*1024*1024), cfg.JetStream.Stream.MaxBytes)
+	assert.Equal(t, 1, cfg.JetStream.Stream.Replicas)
+	assert.Equal(t, "limits", cfg.JetStream.Stream.Retention)
+	assert.Equal(t, "old", cfg.JetStream.Stream.Discard)
+	assert.Equal(t, "embedded", cfg.Storage.MigrationsDir)
+	assert.True(t, cfg.Storage.AutoMigrate)
+}
+
+func TestLoadCoreConfig_JetStreamPolicyFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+nats:
+  port: 4333
+  http_port: 8333
+  store_dir: /tmp/jetstream
+storage:
+  metadata_db: /tmp/metadata.db
+  data_dir: /tmp/data
+  migrations_dir: embedded
+  auto_migrate: false
+templates:
+  dir: /tmp/templates
+jetstream:
+  stream:
+    name: TEST_DATA
+    subjects:
+      - custom.data.>
+    storage: memory
+    max_age: 1h
+    max_bytes: 1048576
+    replicas: 1
+    retention: limits
+    discard: new
+  dead_letter_subject: custom.data.deadletter
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, 4333, cfg.NATS.Port)
+	assert.Equal(t, 8333, cfg.NATS.HTTPPort)
+	assert.Equal(t, "/tmp/jetstream", cfg.NATS.StoreDir)
+	assert.Equal(t, "/tmp/metadata.db", cfg.Storage.MetadataDB)
+	assert.Equal(t, "embedded", cfg.Storage.MigrationsDir)
+	assert.False(t, cfg.Storage.AutoMigrate)
+	assert.Equal(t, "/tmp/templates", cfg.Templates.Dir)
+	assert.Equal(t, "TEST_DATA", cfg.JetStream.Stream.Name)
+	assert.Equal(t, []string{"custom.data.>"}, cfg.JetStream.Stream.Subjects)
+	assert.Equal(t, time.Hour, cfg.JetStream.Stream.MaxAge)
+	assert.Equal(t, int64(1048576), cfg.JetStream.Stream.MaxBytes)
+	assert.Equal(t, "custom.data.deadletter", cfg.JetStream.DeadLetterSubject)
+
+	streamConfig, err := cfg.JetStream.Stream.NATSConfig()
+	require.NoError(t, err)
+	assert.Equal(t, nats.MemoryStorage, streamConfig.Storage)
+	assert.Equal(t, nats.DiscardNew, streamConfig.Discard)
+	assert.Equal(t, nats.LimitsPolicy, streamConfig.Retention)
+}
+
+func TestJetStreamStreamConfig_NATSConfigRejectsInvalidPolicies(t *testing.T) {
+	tests := []struct {
+		name   string
+		config JetStreamStreamConfig
+	}{
+		{
+			name: "storage",
+			config: JetStreamStreamConfig{
+				Name:      "TEST",
+				Subjects:  []string{"test.>"},
+				Storage:   "disk",
+				MaxAge:    time.Hour,
+				MaxBytes:  1024,
+				Replicas:  1,
+				Retention: "limits",
+				Discard:   "old",
+			},
+		},
+		{
+			name: "retention",
+			config: JetStreamStreamConfig{
+				Name:      "TEST",
+				Subjects:  []string{"test.>"},
+				Storage:   "file",
+				MaxAge:    time.Hour,
+				MaxBytes:  1024,
+				Replicas:  1,
+				Retention: "forever",
+				Discard:   "old",
+			},
+		},
+		{
+			name: "discard",
+			config: JetStreamStreamConfig{
+				Name:      "TEST",
+				Subjects:  []string{"test.>"},
+				Storage:   "file",
+				MaxAge:    time.Hour,
+				MaxBytes:  1024,
+				Replicas:  1,
+				Retention: "limits",
+				Discard:   "middle",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.config.NATSConfig()
+			require.Error(t, err)
+		})
+	}
+}

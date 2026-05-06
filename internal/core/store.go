@@ -18,6 +18,11 @@ type Store struct {
 
 // NewStore creates and initializes a new Store
 func NewStore(dbPath string) (*Store, error) {
+	return NewStoreWithMigrations(dbPath, true)
+}
+
+// NewStoreWithMigrations creates a Store and optionally applies embedded migrations.
+func NewStoreWithMigrations(dbPath string, autoMigrate bool) (*Store, error) {
 	// Create data directory if not exists
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -39,12 +44,44 @@ func NewStore(dbPath string) (*Store, error) {
 	}
 
 	store := &Store{db: db}
-	if err := runMigrations(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize DB: %w", err)
+	if autoMigrate {
+		if err := runMigrations(db); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to initialize DB: %w", err)
+		}
+	}
+
+	if !autoMigrate {
+		if err := verifyStoreSchema(db); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("failed to verify DB schema: %w", err)
+		}
 	}
 
 	return store, nil
+}
+
+func verifyStoreSchema(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'assets'`,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("assets table not found; run migrations or enable auto_migrate")
+	}
+
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'asset_relations'`,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("asset_relations table not found; run migrations or enable auto_migrate")
+	}
+
+	return nil
 }
 
 // Close closes the DB connection

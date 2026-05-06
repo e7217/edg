@@ -93,6 +93,18 @@ func TestHandleAssetData_AutoRegister(t *testing.T) {
 	assert.False(t, asset.UpdatedAt.IsZero())
 }
 
+func TestNewDataHandlerWithSubjects(t *testing.T) {
+	handler := NewDataHandlerWithSubjects(nil, nil, "custom.validated", "custom.deadletter")
+
+	require.NotNil(t, handler)
+	assert.Equal(t, "custom.validated", handler.validatedSubject)
+	assert.Equal(t, "custom.deadletter", handler.deadLetterSubject)
+
+	defaults := NewDataHandlerWithSubjects(nil, nil, "", "")
+	assert.Equal(t, DefaultValidatedDataSubject, defaults.validatedSubject)
+	assert.Equal(t, DefaultDeadLetterSubject, defaults.deadLetterSubject)
+}
+
 // TestGetDataCount tests thread-safe data count
 func TestGetDataCount(t *testing.T) {
 	handler := NewDataHandler(nil, nil)
