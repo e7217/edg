@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
@@ -103,6 +104,90 @@ func TestNewDataHandlerWithSubjects(t *testing.T) {
 	defaults := NewDataHandlerWithSubjects(nil, nil, "", "")
 	assert.Equal(t, DefaultValidatedDataSubject, defaults.validatedSubject)
 	assert.Equal(t, DefaultDeadLetterSubject, defaults.deadLetterSubject)
+}
+
+func TestNewDataHandlerWithSubjectsAndEvents(t *testing.T) {
+	publisher := NewEventPublisher(nil)
+	handler := NewDataHandlerWithSubjects(nil, nil, "custom.validated", "custom.deadletter", publisher)
+
+	require.NotNil(t, handler)
+	assert.Equal(t, "custom.validated", handler.validatedSubject)
+	assert.Equal(t, "custom.deadletter", handler.deadLetterSubject)
+	assert.Same(t, publisher, handler.events)
+}
+
+// TestHandleAssetData_AutoRegisterPublishesChangedEvent tests auto-registration events.
+func TestHandleAssetData_AutoRegisterPublishesChangedEvent(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
+	handler := NewDataHandler(nil, store, NewEventPublisher(nc))
+
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID:   "auto-sensor",
+		Timestamp: time.Now().Unix(),
+		Values: []TagValue{
+			{Name: "temperature", Number: &tempValue},
+		},
+	}
+
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{
+		Subject: "platform.data.raw",
+		Data:    jsonData,
+	})
+
+	ev := requireMetaEvent(t, assetEvents)
+	assert.Equal(t, EventCreated, ev.EventType)
+	assert.Equal(t, EntityAsset, ev.EntityType)
+	assert.Equal(t, "auto-sensor", ev.EntityID)
+	assert.Equal(t, SourceAuto, ev.Source)
+	assert.Empty(t, ev.Before)
+	require.NotEmpty(t, ev.After)
+
+	var after Asset
+	require.NoError(t, json.Unmarshal(ev.After, &after))
+	assert.Equal(t, "auto-sensor", after.ID)
+	assert.Equal(t, SourceAuto, after.Source)
+}
+
+// TestHandleAssetData_ExistingAssetDoesNotPublishChangedEvent tests existing asset ingestion.
+func TestHandleAssetData_ExistingAssetDoesNotPublishChangedEvent(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.CreateAsset(&Asset{
+		ID:        "existing-sensor",
+		Name:      "existing-sensor",
+		Source:    SourceManual,
+		CreatedAt: time.Now(),
+	}))
+
+	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
+	handler := NewDataHandler(nil, store, NewEventPublisher(nc))
+
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID: "existing-sensor",
+		Values: []TagValue{
+			{Name: "temperature", Number: &tempValue},
+		},
+	}
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{Data: jsonData})
+	requireNoMetaEvent(t, assetEvents)
 }
 
 // TestGetDataCount tests thread-safe data count

@@ -33,6 +33,59 @@ func requestMeta(t *testing.T, nc interface {
 	return resp
 }
 
+type testMetaChangeEvent struct {
+	SchemaVersion int             `json:"schema_version"`
+	EventType     EventType       `json:"event_type"`
+	EntityType    EntityType      `json:"entity_type"`
+	EntityID      string          `json:"entity_id"`
+	Source        string          `json:"source"`
+	Timestamp     time.Time       `json:"timestamp"`
+	Before        json.RawMessage `json:"before,omitempty"`
+	After         json.RawMessage `json:"after,omitempty"`
+}
+
+func subscribeMetaEvents(t *testing.T, nc *nats.Conn, subject string) chan testMetaChangeEvent {
+	t.Helper()
+
+	received := make(chan testMetaChangeEvent, 4)
+	sub, err := nc.Subscribe(subject, func(msg *nats.Msg) {
+		var ev testMetaChangeEvent
+		if err := json.Unmarshal(msg.Data, &ev); err == nil {
+			received <- ev
+		}
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = sub.Unsubscribe()
+	})
+	require.NoError(t, nc.Flush())
+	return received
+}
+
+func requireMetaEvent(t *testing.T, received <-chan testMetaChangeEvent) testMetaChangeEvent {
+	t.Helper()
+
+	select {
+	case ev := <-received:
+		require.Equal(t, EventSchemaVersion, ev.SchemaVersion)
+		require.False(t, ev.Timestamp.IsZero())
+		return ev
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting for metadata change event")
+		return testMetaChangeEvent{}
+	}
+}
+
+func requireNoMetaEvent(t *testing.T, received <-chan testMetaChangeEvent) {
+	t.Helper()
+
+	select {
+	case ev := <-received:
+		t.Fatalf("unexpected metadata change event: %+v", ev)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
 // TestMetaHandler_CreateAsset tests asset creation through handler
 func TestMetaHandler_CreateAsset(t *testing.T) {
 	store, err := NewStore(":memory:")
@@ -228,7 +281,8 @@ func TestMetaHandler_CreateAssetExtendedMetadata(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	handler := NewMetaHandler(store, NewTemplateLoader())
+	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
+	handler := NewMetaHandler(store, NewTemplateLoader(), NewEventPublisher(nc))
 	require.NoError(t, handler.RegisterHandlers(nc))
 	require.NoError(t, nc.Flush())
 
@@ -249,6 +303,19 @@ func TestMetaHandler_CreateAssetExtendedMetadata(t *testing.T) {
 	assert.Equal(t, "aas", asset.Source)
 	assert.Equal(t, map[string]string{"manufacturer": "ACME"}, asset.Attributes)
 	assert.False(t, asset.UpdatedAt.IsZero())
+
+	ev := requireMetaEvent(t, assetEvents)
+	assert.Equal(t, EventCreated, ev.EventType)
+	assert.Equal(t, EntityAsset, ev.EntityType)
+	assert.Equal(t, asset.ID, ev.EntityID)
+	assert.Equal(t, "aas", ev.Source)
+	assert.Empty(t, ev.Before)
+	require.NotEmpty(t, ev.After)
+
+	var after Asset
+	require.NoError(t, json.Unmarshal(ev.After, &after))
+	assert.Equal(t, asset.ID, after.ID)
+	assert.Equal(t, "extended-create", after.Name)
 }
 
 // TestMetaHandler_UpdateAsset tests full asset metadata replacement through NATS.
@@ -272,7 +339,8 @@ func TestMetaHandler_UpdateAsset(t *testing.T) {
 		UpdatedAt:    createdAt,
 	}))
 
-	handler := NewMetaHandler(store, NewTemplateLoader())
+	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
+	handler := NewMetaHandler(store, NewTemplateLoader(), NewEventPublisher(nc))
 	require.NoError(t, handler.RegisterHandlers(nc))
 	require.NoError(t, nc.Flush())
 
@@ -295,6 +363,24 @@ func TestMetaHandler_UpdateAsset(t *testing.T) {
 	assert.Equal(t, "aas", asset.Source)
 	assert.Equal(t, map[string]string{"status": "new"}, asset.Attributes)
 	assert.True(t, asset.UpdatedAt.After(createdAt))
+
+	ev := requireMetaEvent(t, assetEvents)
+	assert.Equal(t, EventUpdated, ev.EventType)
+	assert.Equal(t, EntityAsset, ev.EntityType)
+	assert.Equal(t, "asset-update", ev.EntityID)
+	assert.Equal(t, "aas", ev.Source)
+	require.NotEmpty(t, ev.Before)
+	require.NotEmpty(t, ev.After)
+
+	var before Asset
+	require.NoError(t, json.Unmarshal(ev.Before, &before))
+	assert.Equal(t, "old-name", before.Name)
+	assert.Equal(t, SourceManual, before.Source)
+
+	var after Asset
+	require.NoError(t, json.Unmarshal(ev.After, &after))
+	assert.Equal(t, "new-name", after.Name)
+	assert.Equal(t, "aas", after.Source)
 }
 
 // TestMetaHandler_UpdateAssetNotFound tests update failure for missing assets.
@@ -339,6 +425,70 @@ func TestMetaHandler_UpdateAssetInvalidPayload(t *testing.T) {
 	assert.Equal(t, "invalid request format", resp.Error)
 }
 
+// TestMetaHandler_DeleteAssetPublishesChangedEvent tests deletion events.
+func TestMetaHandler_DeleteAssetPublishesChangedEvent(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.CreateAsset(&Asset{
+		ID:        "asset-delete",
+		Name:      "delete-me",
+		Source:    "opcua",
+		CreatedAt: time.Now(),
+	}))
+
+	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
+	handler := NewMetaHandler(store, NewTemplateLoader(), NewEventPublisher(nc))
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetDelete, DeleteAssetRequest{
+		ID:     "asset-delete",
+		Source: "operator",
+	})
+	require.True(t, resp.Success, resp.Error)
+
+	ev := requireMetaEvent(t, assetEvents)
+	assert.Equal(t, EventDeleted, ev.EventType)
+	assert.Equal(t, EntityAsset, ev.EntityType)
+	assert.Equal(t, "asset-delete", ev.EntityID)
+	assert.Equal(t, "operator", ev.Source)
+	require.NotEmpty(t, ev.Before)
+	assert.Empty(t, ev.After)
+
+	var before Asset
+	require.NoError(t, json.Unmarshal(ev.Before, &before))
+	assert.Equal(t, "delete-me", before.Name)
+	assert.Equal(t, "opcua", before.Source)
+}
+
+// TestMetaHandler_AssetCreateFailureDoesNotPublishChangedEvent verifies store failures are silent.
+func TestMetaHandler_AssetCreateFailureDoesNotPublishChangedEvent(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.CreateAsset(&Asset{
+		ID:        "existing",
+		Name:      "duplicate",
+		CreatedAt: time.Now(),
+	}))
+
+	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
+	handler := NewMetaHandler(store, NewTemplateLoader(), NewEventPublisher(nc))
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetCreate, CreateAssetRequest{Name: "duplicate"})
+	assert.False(t, resp.Success)
+	requireNoMetaEvent(t, assetEvents)
+}
+
 // ==================== AssetRelation Handler Tests ====================
 
 // TestHandleRelationCreate_Success tests successful relation creation
@@ -377,6 +527,67 @@ func TestHandleRelationCreate_Success(t *testing.T) {
 	assert.Equal(t, "rel-001", retrieved.ID)
 	assert.Equal(t, "asset-001", retrieved.SourceAssetID)
 	assert.Equal(t, "asset-002", retrieved.TargetAssetID)
+}
+
+// TestHandleRelationCreateAndDelete_PublishChangedEvents tests relation event payloads.
+func TestHandleRelationCreateAndDelete_PublishChangedEvents(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	require.NoError(t, store.CreateAsset(&Asset{ID: "asset-001", Name: "sensor-1", CreatedAt: time.Now()}))
+	require.NoError(t, store.CreateAsset(&Asset{ID: "asset-002", Name: "equipment-1", CreatedAt: time.Now()}))
+
+	relationEvents := subscribeMetaEvents(t, nc, SubjectRelationChanged)
+	handler := NewMetaHandler(store, NewTemplateLoader(), NewEventPublisher(nc))
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectRelationCreate, CreateRelationRequest{
+		SourceAssetID: "asset-001",
+		TargetAssetID: "asset-002",
+		RelationType:  RelationPartOf,
+		Metadata:      map[string]string{"installed_date": "2025-01-15"},
+		Source:        "aas",
+	})
+	require.True(t, resp.Success, resp.Error)
+
+	var relation AssetRelation
+	require.NoError(t, json.Unmarshal(resp.Data, &relation))
+
+	created := requireMetaEvent(t, relationEvents)
+	assert.Equal(t, EventCreated, created.EventType)
+	assert.Equal(t, EntityRelation, created.EntityType)
+	assert.Equal(t, relation.ID, created.EntityID)
+	assert.Equal(t, "aas", created.Source)
+	assert.Empty(t, created.Before)
+	require.NotEmpty(t, created.After)
+
+	var createdAfter AssetRelation
+	require.NoError(t, json.Unmarshal(created.After, &createdAfter))
+	assert.Equal(t, relation.ID, createdAfter.ID)
+	assert.Equal(t, RelationPartOf, createdAfter.RelationType)
+
+	resp = requestMeta(t, nc, SubjectRelationDelete, DeleteRelationRequest{
+		ID:     relation.ID,
+		Source: "operator",
+	})
+	require.True(t, resp.Success, resp.Error)
+
+	deleted := requireMetaEvent(t, relationEvents)
+	assert.Equal(t, EventDeleted, deleted.EventType)
+	assert.Equal(t, EntityRelation, deleted.EntityType)
+	assert.Equal(t, relation.ID, deleted.EntityID)
+	assert.Equal(t, "operator", deleted.Source)
+	require.NotEmpty(t, deleted.Before)
+	assert.Empty(t, deleted.After)
+
+	var deletedBefore AssetRelation
+	require.NoError(t, json.Unmarshal(deleted.Before, &deletedBefore))
+	assert.Equal(t, relation.ID, deletedBefore.ID)
+	assert.Equal(t, "asset-001", deletedBefore.SourceAssetID)
 }
 
 // TestHandleRelationCreate_InvalidRelationType tests invalid relation type

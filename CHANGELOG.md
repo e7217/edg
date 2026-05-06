@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Asset metadata extensions for external IDs, source tracking, attributes, and update timestamps
 - SQLite metadata schema migrations with embedded migration files
 - Asset update metadata API subject (`platform.meta.asset.update`)
+- Metadata change events for asset and relation create/update/delete notifications
 
 ### Changed
 

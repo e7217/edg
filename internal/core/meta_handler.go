@@ -29,13 +29,19 @@ const (
 type MetaHandler struct {
 	store  *Store
 	loader *TemplateLoader
+	events *EventPublisher
 }
 
 // NewMetaHandler creates a new handler
-func NewMetaHandler(store *Store, loader *TemplateLoader) *MetaHandler {
+func NewMetaHandler(store *Store, loader *TemplateLoader, events ...*EventPublisher) *MetaHandler {
+	var publisher *EventPublisher
+	if len(events) > 0 {
+		publisher = events[0]
+	}
 	return &MetaHandler{
 		store:  store,
 		loader: loader,
+		events: publisher,
 	}
 }
 
@@ -145,6 +151,13 @@ func (h *MetaHandler) handleAssetCreate(msg *nats.Msg) {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
+
+	h.events.PublishAssetChanged(MetaChangeEvent{
+		EventType: EventCreated,
+		EntityID:  asset.ID,
+		Source:    asset.Source,
+		After:     asset,
+	})
 
 	log.Printf("[Meta] Asset created: %s (%s)", asset.Name, asset.ID)
 	h.reply(msg, Response{Success: true, Data: asset})
@@ -261,13 +274,22 @@ func (h *MetaHandler) handleAssetUpdate(msg *nats.Msg) {
 		return
 	}
 
+	h.events.PublishAssetChanged(MetaChangeEvent{
+		EventType: EventUpdated,
+		EntityID:  updated.ID,
+		Source:    updated.Source,
+		Before:    existing,
+		After:     updated,
+	})
+
 	log.Printf("[Meta] Asset updated: %s (%s)", updated.Name, updated.ID)
 	h.reply(msg, Response{Success: true, Data: updated})
 }
 
 // DeleteAssetRequest is a request to delete an asset
 type DeleteAssetRequest struct {
-	ID string `json:"id"`
+	ID     string `json:"id"`
+	Source string `json:"source,omitempty"`
 }
 
 func (h *MetaHandler) handleAssetDelete(msg *nats.Msg) {
@@ -282,10 +304,23 @@ func (h *MetaHandler) handleAssetDelete(msg *nats.Msg) {
 		return
 	}
 
+	before, err := h.store.GetAsset(req.ID)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+
 	if err := h.store.DeleteAsset(req.ID); err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
+
+	h.events.PublishAssetChanged(MetaChangeEvent{
+		EventType: EventDeleted,
+		EntityID:  req.ID,
+		Source:    req.Source,
+		Before:    before,
+	})
 
 	log.Printf("[Meta] Asset deleted: %s", req.ID)
 	h.reply(msg, Response{Success: true})
@@ -304,6 +339,7 @@ type CreateRelationRequest struct {
 	TargetAssetID string            `json:"target_asset_id"`
 	RelationType  RelationType      `json:"relation_type"`
 	Metadata      map[string]string `json:"metadata,omitempty"`
+	Source        string            `json:"source,omitempty"`
 }
 
 func (h *MetaHandler) handleRelationCreate(msg *nats.Msg) {
@@ -347,6 +383,13 @@ func (h *MetaHandler) handleRelationCreate(msg *nats.Msg) {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
+
+	h.events.PublishRelationChanged(MetaChangeEvent{
+		EventType: EventCreated,
+		EntityID:  relation.ID,
+		Source:    req.Source,
+		After:     relation,
+	})
 
 	log.Printf("[Meta] Relation created: %s (%s -> %s, type: %s)",
 		relation.ID, relation.SourceAssetID, relation.TargetAssetID, relation.RelationType)
@@ -455,7 +498,8 @@ func (h *MetaHandler) handleRelationList(msg *nats.Msg) {
 
 // DeleteRelationRequest is a request to delete a relation
 type DeleteRelationRequest struct {
-	ID string `json:"id"`
+	ID     string `json:"id"`
+	Source string `json:"source,omitempty"`
 }
 
 func (h *MetaHandler) handleRelationDelete(msg *nats.Msg) {
@@ -470,10 +514,23 @@ func (h *MetaHandler) handleRelationDelete(msg *nats.Msg) {
 		return
 	}
 
+	before, err := h.store.GetRelation(req.ID)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+
 	if err := h.store.DeleteRelation(req.ID); err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
+
+	h.events.PublishRelationChanged(MetaChangeEvent{
+		EventType: EventDeleted,
+		EntityID:  req.ID,
+		Source:    req.Source,
+		Before:    before,
+	})
 
 	log.Printf("[Meta] Relation deleted: %s", req.ID)
 	h.reply(msg, Response{Success: true})

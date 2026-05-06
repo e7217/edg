@@ -132,13 +132,15 @@ func main() {
 	log.Printf("[Core] Loaded %d templates", loader.Count())
 
 	// 6. Create handlers and subscribe
+	eventPublisher := core.NewEventPublisher(nc)
 	dataHandler := core.NewDataHandlerWithSubjects(
 		js,
 		store,
 		cfg.JetStream.ValidatedSubject,
 		cfg.JetStream.DeadLetterSubject,
+		eventPublisher,
 	)
-	metaHandler := core.NewMetaHandler(store, loader)
+	metaHandler := core.NewMetaHandler(store, loader, eventPublisher)
 
 	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
 	if err != nil {

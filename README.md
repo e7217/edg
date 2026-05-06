@@ -24,6 +24,7 @@
 ## Key Features
 
 *   **Automatic Asset Registration**: Device discovery and metadata registration without manual configuration.
+*   **Metadata Change Events**: Publishes asset and relation changes on NATS for adapters and sidecars.
 *   **Data Validation**: Enforces schema and quality checks at the edge before data enters your storage.
 *   **At-Least-Once Delivery**: Uses NATS JetStream for durable delivery after core publish acknowledgement. See [ADR 0001](docs/adr/0001-data-plane-reliability.md) for the exact reliability boundary.
 *   **Flexible Adapters**: Easily write collectors in Python for Modbus, OPC-UA, or custom protocols.
