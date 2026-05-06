@@ -1,6 +1,7 @@
 package core
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,6 +17,29 @@ func TestNewStore_Success(t *testing.T) {
 	defer store.Close()
 
 	// Verify DB is initialized by checking stats
+	stats, err := store.GetStats()
+	require.NoError(t, err)
+	assert.Equal(t, 0, stats.TotalAssets)
+}
+
+func TestNewStoreWithMigrationsDisabledRequiresExistingSchema(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "metadata.db")
+
+	store, err := NewStoreWithMigrations(dbPath, false)
+
+	require.Error(t, err)
+	assert.Nil(t, store)
+	assert.Contains(t, err.Error(), "run migrations or enable auto_migrate")
+}
+
+func TestNewStoreWithMigrationsDisabledOpensMigratedDB(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "metadata.db")
+	require.NoError(t, RunMigrations(dbPath))
+
+	store, err := NewStoreWithMigrations(dbPath, false)
+	require.NoError(t, err)
+	defer store.Close()
+
 	stats, err := store.GetStats()
 	require.NoError(t, err)
 	assert.Equal(t, 0, stats.TotalAssets)

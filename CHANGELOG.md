@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Documented the data plane reliability model in ADR 0001
+- Added configurable JetStream stream policy and dead-letter subject handling
+- Added Go chaos regressions for JetStream backlog recovery, discard pressure,
+  concurrent asset auto-registration, and dead-letter publication
 - Initial EDG Platform Core implementation with embedded NATS server
 - Metadata storage system using SQLite database
 - Template loading and management system

@@ -63,6 +63,42 @@ INSTALL_DIR=/custom/path ./install.sh
 - **Data Storage**: `./data/metadata.db` (auto-created)
 - **Schema Migrations**: embedded migrations run automatically on startup
 - **Templates**: `./templates/` (optional)
+- **Config file**: set `EDG_CORE_CONFIG` or pass `--config` to choose a core YAML file.
+
+**JetStream reliability defaults:**
+```yaml
+jetstream:
+  validated_subject: platform.data.validated
+  dead_letter_subject: platform.data.deadletter
+  stream:
+    name: PLATFORM_DATA
+    subjects:
+      - platform.data.>
+    storage: file
+    max_age: 168h
+    max_bytes: 1073741824
+    replicas: 1
+    retention: limits
+    discard: old
+```
+
+## What "Reliable" Means
+
+EDG persists data after the core successfully publishes validated data to
+JetStream and receives a publish acknowledgement. The adapter-to-core hop is
+plain NATS pub/sub, so adapters that need stronger end-to-end guarantees should
+retry or buffer before publishing.
+
+If publishing to `platform.data.validated` fails, core attempts to publish a JSON
+failure envelope to `platform.data.deadletter`. Monitor these expvar counters on
+the core process:
+
+- `edg_core_jetstream_publish_failures`
+- `edg_core_jetstream_dead_letters`
+- `edg_core_jetstream_dead_letter_failures`
+
+See [ADR 0001](adr/0001-data-plane-reliability.md) for the reliability model and
+failure-mode tradeoffs.
 
 ### Telegraf
 Configuration file: `/opt/edg/configs/telegraf/telegraf.conf`

@@ -26,6 +26,7 @@ func main() {
 	// Parse command-line flags
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
 	migrateDownFlag := flag.Int("migrate-down", 0, "Rollback metadata DB by N migration steps and exit")
+	configFlag := flag.String("config", os.Getenv("EDG_CORE_CONFIG"), "Path to core configuration file")
 	flag.Parse()
 
 	// Handle version flag
@@ -37,9 +38,18 @@ func main() {
 		os.Exit(0)
 	}
 
-	metadataDBPath := "./data/metadata.db"
+	configPath := *configFlag
+	if configPath == "" {
+		configPath = discoverConfigPath()
+	}
+
+	cfg, err := core.LoadCoreConfig(configPath)
+	if err != nil {
+		log.Fatalf("Failed to load core config: %v", err)
+	}
+
 	if *migrateDownFlag > 0 {
-		if err := core.RunMigrationSteps(metadataDBPath, -*migrateDownFlag); err != nil {
+		if err := core.RunMigrationSteps(cfg.Storage.MetadataDB, -*migrateDownFlag); err != nil {
 			log.Fatalf("Failed to rollback metadata DB: %v", err)
 		}
 		log.Printf("[Core] Rolled back metadata DB by %d migration step(s)", *migrateDownFlag)
@@ -48,10 +58,10 @@ func main() {
 
 	// 1. Embedded NATS Server configuration
 	opts := &server.Options{
-		Port:      4222,
-		HTTPPort:  8222, // for monitoring
-		JetStream: true, // Enable JetStream for message persistence
-		StoreDir:  "./data/jetstream",
+		Port:      cfg.NATS.Port,
+		HTTPPort:  cfg.NATS.HTTPPort, // for monitoring
+		JetStream: true,              // Enable JetStream for message persistence
+		StoreDir:  cfg.NATS.StoreDir,
 	}
 
 	ns, err := server.NewServer(opts)
@@ -69,12 +79,12 @@ func main() {
 
 	log.Println("=================================")
 	log.Println("  EDG Platform Core Started")
-	log.Println("  NATS: nats://localhost:4222")
-	log.Println("  Monitor: http://localhost:8222")
+	log.Printf("  NATS: nats://localhost:%d", cfg.NATS.Port)
+	log.Printf("  Monitor: http://localhost:%d", cfg.NATS.HTTPPort)
 	log.Println("=================================")
 
 	// 3. Connect as internal client
-	nc, err := nats.Connect(nats.DefaultURL)
+	nc, err := nats.Connect(fmt.Sprintf("nats://localhost:%d", cfg.NATS.Port))
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
@@ -86,31 +96,29 @@ func main() {
 		log.Fatalf("Failed to create JetStream context: %v", err)
 	}
 
-	// 3.2. Create JetStream stream for platform data
-	streamName := "PLATFORM_DATA"
-	_, err = js.StreamInfo(streamName)
+	// 3.2. Create or align JetStream stream for platform data
+	streamConfig, err := cfg.JetStream.Stream.NATSConfig()
+	if err != nil {
+		log.Fatalf("Invalid JetStream stream config: %v", err)
+	}
+
+	_, err = js.StreamInfo(streamConfig.Name)
 	if err != nil {
 		// Stream doesn't exist, create it
-		_, err = js.AddStream(&nats.StreamConfig{
-			Name:     streamName,
-			Subjects: []string{"platform.data.>"},
-			Storage:  nats.FileStorage,
-			MaxAge:   7 * 24 * time.Hour, // 7 days retention
-		})
+		_, err = js.AddStream(streamConfig)
 		if err != nil {
 			log.Fatalf("Failed to create JetStream stream: %v", err)
 		}
-		log.Printf("[Core] Created JetStream stream: %s", streamName)
+		log.Printf("[Core] Created JetStream stream: %s", streamConfig.Name)
 	} else {
-		log.Printf("[Core] JetStream stream already exists: %s", streamName)
+		if _, err := js.UpdateStream(streamConfig); err != nil {
+			log.Fatalf("Failed to update JetStream stream: %v", err)
+		}
+		log.Printf("[Core] JetStream stream aligned: %s", streamConfig.Name)
 	}
 
 	// 4. Initialize metadata store
-	if err := core.RunMigrations(metadataDBPath); err != nil {
-		log.Fatalf("Failed to migrate metadata DB: %v", err)
-	}
-
-	store, err := core.NewStore(metadataDBPath)
+	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
 	if err != nil {
 		log.Fatalf("Failed to create store: %v", err)
 	}
@@ -118,13 +126,18 @@ func main() {
 
 	// 5. Initialize template loader
 	loader := core.NewTemplateLoader()
-	if err := loader.LoadFromDir("./templates"); err != nil {
+	if err := loader.LoadFromDir(cfg.Templates.Dir); err != nil {
 		log.Printf("[Core] Warning: Failed to load templates: %v", err)
 	}
 	log.Printf("[Core] Loaded %d templates", loader.Count())
 
 	// 6. Create handlers and subscribe
-	dataHandler := core.NewDataHandler(js, store)
+	dataHandler := core.NewDataHandlerWithSubjects(
+		js,
+		store,
+		cfg.JetStream.ValidatedSubject,
+		cfg.JetStream.DeadLetterSubject,
+	)
 	metaHandler := core.NewMetaHandler(store, loader)
 
 	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
@@ -146,4 +159,16 @@ func main() {
 	log.Println("[Core] Shutting down...")
 	nc.Drain()
 	ns.Shutdown()
+}
+
+func discoverConfigPath() string {
+	for _, path := range []string{
+		"/opt/edg/config.yaml",
+		"deploy/configs/core/config.dev.yaml",
+	} {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
 }

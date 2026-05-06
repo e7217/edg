@@ -3,6 +3,7 @@
 nats:
   port: 4222
   http_port: 8222
+  store_dir: /var/lib/edg/data/jetstream
   log_level: info
 
 storage:
@@ -14,6 +15,20 @@ storage:
 templates:
   dir: /etc/edg/templates
   auto_reload: true
+
+jetstream:
+  validated_subject: platform.data.validated
+  dead_letter_subject: platform.data.deadletter
+  stream:
+    name: PLATFORM_DATA
+    subjects:
+      - platform.data.>
+    storage: file
+    max_age: 168h
+    max_bytes: 1073741824
+    replicas: 1
+    retention: limits
+    discard: old
 
 logging:
   level: info
