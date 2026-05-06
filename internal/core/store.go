@@ -28,6 +28,9 @@ func NewStore(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to open DB: %w", err)
 	}
+	if dbPath == ":memory:" {
+		db.SetMaxOpenConns(1)
+	}
 
 	// Enable foreign key constraints
 	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
@@ -36,7 +39,7 @@ func NewStore(dbPath string) (*Store, error) {
 	}
 
 	store := &Store{db: db}
-	if err := store.init(); err != nil {
+	if err := runMigrations(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize DB: %w", err)
 	}
@@ -44,53 +47,140 @@ func NewStore(dbPath string) (*Store, error) {
 	return store, nil
 }
 
-// init creates tables
-func (s *Store) init() error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS assets (
-		id TEXT PRIMARY KEY,
-		name TEXT UNIQUE NOT NULL,
-		template_name TEXT,
-		labels TEXT,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-	CREATE INDEX IF NOT EXISTS idx_assets_name ON assets(name);
-	CREATE INDEX IF NOT EXISTS idx_assets_template ON assets(template_name);
-
-	CREATE TABLE IF NOT EXISTS asset_relations (
-		id TEXT PRIMARY KEY,
-		source_asset_id TEXT NOT NULL,
-		target_asset_id TEXT NOT NULL,
-		relation_type TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		metadata TEXT,
-		FOREIGN KEY (source_asset_id) REFERENCES assets(id) ON DELETE CASCADE,
-		FOREIGN KEY (target_asset_id) REFERENCES assets(id) ON DELETE CASCADE,
-		UNIQUE (source_asset_id, target_asset_id, relation_type)
-	);
-	CREATE INDEX IF NOT EXISTS idx_relations_source ON asset_relations(source_asset_id);
-	CREATE INDEX IF NOT EXISTS idx_relations_target ON asset_relations(target_asset_id);
-	CREATE INDEX IF NOT EXISTS idx_relations_type ON asset_relations(relation_type);
-	`
-	_, err := s.db.Exec(schema)
-	return err
-}
-
 // Close closes the DB connection
 func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+type scanner interface {
+	Scan(dest ...interface{}) error
+}
+
+func normalizeAsset(asset *Asset, isCreate bool) {
+	now := time.Now()
+	if isCreate && asset.CreatedAt.IsZero() {
+		asset.CreatedAt = now
+	}
+	if asset.UpdatedAt.IsZero() {
+		if asset.CreatedAt.IsZero() {
+			asset.UpdatedAt = now
+		} else {
+			asset.UpdatedAt = asset.CreatedAt
+		}
+	}
+	if asset.Source == "" {
+		asset.Source = SourceManual
+	}
+	if asset.Labels == nil {
+		asset.Labels = []string{}
+	}
+	if asset.ExternalIDs == nil {
+		asset.ExternalIDs = map[string]string{}
+	}
+	if asset.Attributes == nil {
+		asset.Attributes = map[string]string{}
+	}
+}
+
+func marshalStringSlice(values []string) (string, error) {
+	if values == nil {
+		values = []string{}
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func marshalStringMap(values map[string]string) (string, error) {
+	if values == nil {
+		values = map[string]string{}
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func scanAsset(row scanner) (*Asset, error) {
+	var asset Asset
+	var labelsJSON, externalIDsJSON, attributesJSON string
+	var createdAt, updatedAt sql.NullTime
+
+	err := row.Scan(
+		&asset.ID,
+		&asset.Name,
+		&asset.TemplateName,
+		&labelsJSON,
+		&externalIDsJSON,
+		&asset.Source,
+		&attributesJSON,
+		&createdAt,
+		&updatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	if createdAt.Valid {
+		asset.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		asset.UpdatedAt = updatedAt.Time
+	}
+
+	if err := json.Unmarshal([]byte(labelsJSON), &asset.Labels); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset labels: %w", err)
+	}
+	if err := json.Unmarshal([]byte(externalIDsJSON), &asset.ExternalIDs); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset external IDs: %w", err)
+	}
+	if err := json.Unmarshal([]byte(attributesJSON), &asset.Attributes); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal asset attributes: %w", err)
+	}
+	normalizeAsset(&asset, false)
+	return &asset, nil
+}
+
+func scanAssets(rows *sql.Rows) ([]*Asset, error) {
+	var assets []*Asset
+	for rows.Next() {
+		asset, err := scanAsset(rows)
+		if err != nil {
+			return nil, err
+		}
+		assets = append(assets, asset)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return assets, nil
+}
+
 // CreateAsset creates a new asset
 func (s *Store) CreateAsset(asset *Asset) error {
-	labels, err := json.Marshal(asset.Labels)
+	normalizeAsset(asset, true)
+
+	labels, err := marshalStringSlice(asset.Labels)
 	if err != nil {
 		return fmt.Errorf("failed to marshal asset labels: %w", err)
 	}
+	externalIDs, err := marshalStringMap(asset.ExternalIDs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset external IDs: %w", err)
+	}
+	attributes, err := marshalStringMap(asset.Attributes)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset attributes: %w", err)
+	}
 
 	_, err = s.db.Exec(
-		`INSERT INTO assets (id, name, template_name, labels, created_at) VALUES (?, ?, ?, ?, ?)`,
-		asset.ID, asset.Name, asset.TemplateName, string(labels), asset.CreatedAt,
+		`INSERT INTO assets (id, name, template_name, labels, external_ids, source, attributes, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		asset.ID, asset.Name, asset.TemplateName, labels, externalIDs, asset.Source, attributes,
+		asset.CreatedAt, asset.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create asset: %w", err)
@@ -101,73 +191,66 @@ func (s *Store) CreateAsset(asset *Asset) error {
 // GetAsset retrieves an asset by ID
 func (s *Store) GetAsset(id string) (*Asset, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, template_name, labels, created_at FROM assets WHERE id = ?`,
+		`SELECT id, name, template_name, labels, external_ids, source, attributes, created_at, updated_at
+		 FROM assets WHERE id = ?`,
 		id,
 	)
 
-	var asset Asset
-	var labelsJSON string
-	err := row.Scan(&asset.ID, &asset.Name, &asset.TemplateName, &labelsJSON, &asset.CreatedAt)
+	asset, err := scanAsset(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get asset: %w", err)
 	}
-
-	if err := json.Unmarshal([]byte(labelsJSON), &asset.Labels); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal asset labels: %w", err)
-	}
-	return &asset, nil
+	return asset, nil
 }
 
 // GetAssetByName retrieves an asset by name
 func (s *Store) GetAssetByName(name string) (*Asset, error) {
 	row := s.db.QueryRow(
-		`SELECT id, name, template_name, labels, created_at FROM assets WHERE name = ?`,
+		`SELECT id, name, template_name, labels, external_ids, source, attributes, created_at, updated_at
+		 FROM assets WHERE name = ?`,
 		name,
 	)
 
-	var asset Asset
-	var labelsJSON string
-	err := row.Scan(&asset.ID, &asset.Name, &asset.TemplateName, &labelsJSON, &asset.CreatedAt)
+	asset, err := scanAsset(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get asset: %w", err)
 	}
-
-	if err := json.Unmarshal([]byte(labelsJSON), &asset.Labels); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal asset labels: %w", err)
-	}
-	return &asset, nil
+	return asset, nil
 }
 
 // ListAssets retrieves all assets
 func (s *Store) ListAssets() ([]*Asset, error) {
 	rows, err := s.db.Query(
-		`SELECT id, name, template_name, labels, created_at FROM assets ORDER BY created_at DESC`,
+		`SELECT id, name, template_name, labels, external_ids, source, attributes, created_at, updated_at
+		 FROM assets ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list assets: %w", err)
 	}
 	defer rows.Close()
 
-	var assets []*Asset
-	for rows.Next() {
-		var asset Asset
-		var labelsJSON string
-		if err := rows.Scan(&asset.ID, &asset.Name, &asset.TemplateName, &labelsJSON, &asset.CreatedAt); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(labelsJSON), &asset.Labels); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal asset labels: %w", err)
-		}
-		assets = append(assets, &asset)
-	}
+	return scanAssets(rows)
+}
 
-	return assets, nil
+// ListAssetsBySource retrieves assets created by a source.
+func (s *Store) ListAssetsBySource(source string) ([]*Asset, error) {
+	rows, err := s.db.Query(
+		`SELECT id, name, template_name, labels, external_ids, source, attributes, created_at, updated_at
+		 FROM assets WHERE source = ? ORDER BY created_at DESC`,
+		source,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list assets by source: %w", err)
+	}
+	defer rows.Close()
+
+	return scanAssets(rows)
 }
 
 // DeleteAsset deletes an asset by ID
@@ -197,8 +280,8 @@ func (s *Store) AssetExists(id string) (bool, error) {
 // UpdateAssetTemplate updates an asset's template
 func (s *Store) UpdateAssetTemplate(id, templateName string) error {
 	result, err := s.db.Exec(
-		`UPDATE assets SET template_name = ? WHERE id = ?`,
-		templateName, id,
+		`UPDATE assets SET template_name = ?, updated_at = ? WHERE id = ?`,
+		templateName, time.Now(), id,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update asset: %w", err)
@@ -207,6 +290,41 @@ func (s *Store) UpdateAssetTemplate(id, templateName string) error {
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
 		return fmt.Errorf("asset not found: %s", id)
+	}
+	return nil
+}
+
+// UpdateAsset replaces an asset's mutable metadata fields.
+func (s *Store) UpdateAsset(asset *Asset) error {
+	normalizeAsset(asset, false)
+
+	labels, err := marshalStringSlice(asset.Labels)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset labels: %w", err)
+	}
+	externalIDs, err := marshalStringMap(asset.ExternalIDs)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset external IDs: %w", err)
+	}
+	attributes, err := marshalStringMap(asset.Attributes)
+	if err != nil {
+		return fmt.Errorf("failed to marshal asset attributes: %w", err)
+	}
+
+	asset.UpdatedAt = time.Now()
+	result, err := s.db.Exec(
+		`UPDATE assets
+		 SET name = ?, template_name = ?, labels = ?, external_ids = ?, source = ?, attributes = ?, updated_at = ?
+		 WHERE id = ?`,
+		asset.Name, asset.TemplateName, labels, externalIDs, asset.Source, attributes, asset.UpdatedAt, asset.ID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update asset: %w", err)
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("asset not found: %s", asset.ID)
 	}
 	return nil
 }

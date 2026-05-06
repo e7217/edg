@@ -12,9 +12,9 @@ import (
 // DataHandler handles NATS messages for asset data
 type DataHandler struct {
 	mu    sync.Mutex
-	data  []AssetData            // in-memory storage (PoC)
-	store *Store                 // for auto-registration
-	js    nats.JetStreamContext  // for publishing to JetStream
+	data  []AssetData           // in-memory storage (PoC)
+	store *Store                // for auto-registration
+	js    nats.JetStreamContext // for publishing to JetStream
 }
 
 func NewDataHandler(js nats.JetStreamContext, store *Store) *DataHandler {
@@ -36,10 +36,13 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 	// Auto-register asset if not exists
 	if h.store != nil {
 		if exists, _ := h.store.AssetExists(data.AssetID); !exists {
+			now := time.Now()
 			asset := &Asset{
 				ID:        data.AssetID,
 				Name:      data.AssetID,
-				CreatedAt: time.Now(),
+				Source:    SourceAuto,
+				CreatedAt: now,
+				UpdatedAt: now,
 			}
 			if err := h.store.CreateAsset(asset); err == nil {
 				log.Printf("[Core] Auto-registered asset: %s", data.AssetID)

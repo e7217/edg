@@ -89,6 +89,8 @@ func TestHandleAssetData_AutoRegister(t *testing.T) {
 	require.NotNil(t, asset)
 	assert.Equal(t, "new-sensor", asset.ID)
 	assert.Equal(t, "new-sensor", asset.Name)
+	assert.Equal(t, SourceAuto, asset.Source)
+	assert.False(t, asset.UpdatedAt.IsZero())
 }
 
 // TestGetDataCount tests thread-safe data count

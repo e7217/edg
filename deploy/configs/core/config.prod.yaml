@@ -8,6 +8,8 @@ nats:
 storage:
   metadata_db: /var/lib/edg/metadata.db
   data_dir: /var/lib/edg/data
+  migrations_dir: embedded
+  auto_migrate: true
 
 templates:
   dir: /etc/edg/templates

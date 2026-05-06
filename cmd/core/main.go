@@ -25,6 +25,7 @@ var (
 func main() {
 	// Parse command-line flags
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
+	migrateDownFlag := flag.Int("migrate-down", 0, "Rollback metadata DB by N migration steps and exit")
 	flag.Parse()
 
 	// Handle version flag
@@ -35,6 +36,16 @@ func main() {
 		fmt.Printf("Git Commit: %s\n", GitCommit)
 		os.Exit(0)
 	}
+
+	metadataDBPath := "./data/metadata.db"
+	if *migrateDownFlag > 0 {
+		if err := core.RunMigrationSteps(metadataDBPath, -*migrateDownFlag); err != nil {
+			log.Fatalf("Failed to rollback metadata DB: %v", err)
+		}
+		log.Printf("[Core] Rolled back metadata DB by %d migration step(s)", *migrateDownFlag)
+		os.Exit(0)
+	}
+
 	// 1. Embedded NATS Server configuration
 	opts := &server.Options{
 		Port:      4222,
@@ -95,7 +106,11 @@ func main() {
 	}
 
 	// 4. Initialize metadata store
-	store, err := core.NewStore("./data/metadata.db")
+	if err := core.RunMigrations(metadataDBPath); err != nil {
+		log.Fatalf("Failed to migrate metadata DB: %v", err)
+	}
+
+	store, err := core.NewStore(metadataDBPath)
 	if err != nil {
 		log.Fatalf("Failed to create store: %v", err)
 	}

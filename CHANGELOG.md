@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Telegraf integration for metrics collection
 - VictoriaMetrics integration for time-series data storage
 - Docker Compose deployment configuration
+- Asset metadata extensions for external IDs, source tracking, attributes, and update timestamps
+- SQLite metadata schema migrations with embedded migration files
+- Asset update metadata API subject (`platform.meta.asset.update`)
 
 ### Changed
 

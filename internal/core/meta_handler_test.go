@@ -6,9 +6,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type testMetaResponse struct {
+	Success bool            `json:"success"`
+	Data    json.RawMessage `json:"data,omitempty"`
+	Error   string          `json:"error,omitempty"`
+}
+
+func requestMeta(t *testing.T, nc interface {
+	Request(string, []byte, time.Duration) (*nats.Msg, error)
+}, subject string, payload interface{}) testMetaResponse {
+	t.Helper()
+
+	data, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	msg, err := nc.Request(subject, data, time.Second)
+	require.NoError(t, err)
+
+	var resp testMetaResponse
+	require.NoError(t, json.Unmarshal(msg.Data, &resp))
+	return resp
+}
 
 // TestMetaHandler_CreateAsset tests asset creation through handler
 func TestMetaHandler_CreateAsset(t *testing.T) {
@@ -195,6 +218,125 @@ func TestMetaHandler_TemplateValidation(t *testing.T) {
 
 	// Invalid template
 	assert.False(t, handler.loader.Exists("non-existent"))
+}
+
+// TestMetaHandler_CreateAssetExtendedMetadata tests create requests with extended fields.
+func TestMetaHandler_CreateAssetExtendedMetadata(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetCreate, CreateAssetRequest{
+		Name:        "extended-create",
+		Labels:      []string{"line-1"},
+		ExternalIDs: map[string]string{"irdi": "0173-1#02-BAA120#008"},
+		Source:      "aas",
+		Attributes:  map[string]string{"manufacturer": "ACME"},
+	})
+
+	require.True(t, resp.Success, resp.Error)
+
+	var asset Asset
+	require.NoError(t, json.Unmarshal(resp.Data, &asset))
+	assert.Equal(t, "extended-create", asset.Name)
+	assert.Equal(t, map[string]string{"irdi": "0173-1#02-BAA120#008"}, asset.ExternalIDs)
+	assert.Equal(t, "aas", asset.Source)
+	assert.Equal(t, map[string]string{"manufacturer": "ACME"}, asset.Attributes)
+	assert.False(t, asset.UpdatedAt.IsZero())
+}
+
+// TestMetaHandler_UpdateAsset tests full asset metadata replacement through NATS.
+func TestMetaHandler_UpdateAsset(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	createdAt := time.Now().Add(-time.Hour)
+	require.NoError(t, store.CreateAsset(&Asset{
+		ID:           "asset-update",
+		Name:         "old-name",
+		TemplateName: "old-template",
+		Labels:       []string{"old"},
+		ExternalIDs:  map[string]string{"irdi": "old"},
+		Source:       SourceManual,
+		Attributes:   map[string]string{"status": "old"},
+		CreatedAt:    createdAt,
+		UpdatedAt:    createdAt,
+	}))
+
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetUpdate, UpdateAssetRequest{
+		ID:          "asset-update",
+		Name:        "new-name",
+		Labels:      []string{"new"},
+		ExternalIDs: map[string]string{"aas": "aas://example/asset-update"},
+		Source:      "aas",
+		Attributes:  map[string]string{"status": "new"},
+	})
+
+	require.True(t, resp.Success, resp.Error)
+
+	var asset Asset
+	require.NoError(t, json.Unmarshal(resp.Data, &asset))
+	assert.Equal(t, "new-name", asset.Name)
+	assert.Equal(t, []string{"new"}, asset.Labels)
+	assert.Equal(t, map[string]string{"aas": "aas://example/asset-update"}, asset.ExternalIDs)
+	assert.Equal(t, "aas", asset.Source)
+	assert.Equal(t, map[string]string{"status": "new"}, asset.Attributes)
+	assert.True(t, asset.UpdatedAt.After(createdAt))
+}
+
+// TestMetaHandler_UpdateAssetNotFound tests update failure for missing assets.
+func TestMetaHandler_UpdateAssetNotFound(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetUpdate, UpdateAssetRequest{
+		ID:   "missing",
+		Name: "missing",
+	})
+
+	assert.False(t, resp.Success)
+	assert.Equal(t, "asset not found", resp.Error)
+}
+
+// TestMetaHandler_UpdateAssetInvalidPayload tests malformed update requests.
+func TestMetaHandler_UpdateAssetInvalidPayload(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	msg, err := nc.Request(SubjectAssetUpdate, []byte("{invalid json}"), time.Second)
+	require.NoError(t, err)
+
+	var resp testMetaResponse
+	require.NoError(t, json.Unmarshal(msg.Data, &resp))
+	assert.False(t, resp.Success)
+	assert.Equal(t, "invalid request format", resp.Error)
 }
 
 // ==================== AssetRelation Handler Tests ====================

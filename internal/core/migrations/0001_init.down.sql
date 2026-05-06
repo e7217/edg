@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS asset_relations;
+DROP TABLE IF EXISTS assets;

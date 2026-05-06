@@ -4,12 +4,21 @@ import "time"
 
 // Asset represents a registered asset (sensor, equipment, etc.)
 type Asset struct {
-	ID           string    `json:"id"`
-	Name         string    `json:"name"`
-	TemplateName string    `json:"template_name,omitempty"`
-	Labels       []string  `json:"labels,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	TemplateName string            `json:"template_name,omitempty"`
+	Labels       []string          `json:"labels,omitempty"`
+	ExternalIDs  map[string]string `json:"external_ids,omitempty"`
+	Source       string            `json:"source"`
+	Attributes   map[string]string `json:"attributes,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
+
+const (
+	SourceManual = "manual"
+	SourceAuto   = "auto"
+)
 
 // AssetTemplate defines an asset type loaded from YAML
 type AssetTemplate struct {

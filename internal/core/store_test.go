@@ -47,6 +47,66 @@ func TestCreateAsset_Success(t *testing.T) {
 	assert.Equal(t, asset.Labels, retrieved.Labels)
 }
 
+// TestCreateAsset_ExtendedMetadataRoundTrip tests extended asset metadata persistence.
+func TestCreateAsset_ExtendedMetadataRoundTrip(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	asset := &Asset{
+		ID:           "asset-extended",
+		Name:         "extended-sensor",
+		TemplateName: "temperature-sensor",
+		Labels:       []string{"building-a", "floor-1"},
+		ExternalIDs: map[string]string{
+			"irdi": "0173-1#02-BAA120#008",
+			"aas":  "aas://example/asset-extended",
+		},
+		Source: SourceManual,
+		Attributes: map[string]string{
+			"manufacturer": "ACME",
+			"model":        "T-1000",
+		},
+		CreatedAt: time.Now(),
+	}
+
+	err = store.CreateAsset(asset)
+	require.NoError(t, err)
+
+	retrieved, err := store.GetAsset(asset.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved)
+	assert.Equal(t, asset.ExternalIDs, retrieved.ExternalIDs)
+	assert.Equal(t, SourceManual, retrieved.Source)
+	assert.Equal(t, asset.Attributes, retrieved.Attributes)
+	assert.False(t, retrieved.UpdatedAt.IsZero())
+}
+
+// TestCreateAsset_DefaultExtendedMetadata tests defaults for omitted extended metadata.
+func TestCreateAsset_DefaultExtendedMetadata(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	asset := &Asset{
+		ID:   "asset-defaults",
+		Name: "defaults-sensor",
+	}
+
+	err = store.CreateAsset(asset)
+	require.NoError(t, err)
+
+	retrieved, err := store.GetAsset(asset.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved)
+	assert.Equal(t, []string{}, retrieved.Labels)
+	assert.Equal(t, map[string]string{}, retrieved.ExternalIDs)
+	assert.Equal(t, SourceManual, retrieved.Source)
+	assert.Equal(t, map[string]string{}, retrieved.Attributes)
+	assert.False(t, retrieved.CreatedAt.IsZero())
+	assert.False(t, retrieved.UpdatedAt.IsZero())
+}
+
 // TestCreateAsset_DuplicateName tests duplicate name rejection
 func TestCreateAsset_DuplicateName(t *testing.T) {
 	store, err := NewStore(":memory:")
@@ -190,6 +250,72 @@ func TestListAssets(t *testing.T) {
 	assert.Equal(t, "asset-003", retrieved[0].ID)
 	assert.Equal(t, "asset-002", retrieved[1].ID)
 	assert.Equal(t, "asset-001", retrieved[2].ID)
+}
+
+// TestUpdateAsset tests full replacement of mutable asset metadata.
+func TestUpdateAsset(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	createdAt := time.Now().Add(-time.Hour)
+	asset := &Asset{
+		ID:           "asset-update",
+		Name:         "old-name",
+		TemplateName: "old-template",
+		Labels:       []string{"old"},
+		ExternalIDs:  map[string]string{"irdi": "old"},
+		Source:       SourceManual,
+		Attributes:   map[string]string{"status": "old"},
+		CreatedAt:    createdAt,
+		UpdatedAt:    createdAt,
+	}
+	require.NoError(t, store.CreateAsset(asset))
+
+	update := &Asset{
+		ID:           asset.ID,
+		Name:         "new-name",
+		TemplateName: "new-template",
+		Labels:       []string{"new"},
+		ExternalIDs:  map[string]string{"aas": "aas://example/new"},
+		Source:       "aas",
+		Attributes:   map[string]string{"status": "new"},
+	}
+	require.NoError(t, store.UpdateAsset(update))
+
+	retrieved, err := store.GetAsset(asset.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved)
+	assert.Equal(t, "new-name", retrieved.Name)
+	assert.Equal(t, "new-template", retrieved.TemplateName)
+	assert.Equal(t, []string{"new"}, retrieved.Labels)
+	assert.Equal(t, map[string]string{"aas": "aas://example/new"}, retrieved.ExternalIDs)
+	assert.Equal(t, "aas", retrieved.Source)
+	assert.Equal(t, map[string]string{"status": "new"}, retrieved.Attributes)
+	assert.True(t, retrieved.UpdatedAt.After(createdAt))
+}
+
+// TestListAssetsBySource tests filtering assets by source.
+func TestListAssetsBySource(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	assets := []*Asset{
+		{ID: "asset-manual", Name: "manual", Source: SourceManual, CreatedAt: time.Now()},
+		{ID: "asset-auto", Name: "auto", Source: SourceAuto, CreatedAt: time.Now().Add(time.Second)},
+		{ID: "asset-aas", Name: "aas", Source: "aas", CreatedAt: time.Now().Add(2 * time.Second)},
+	}
+
+	for _, asset := range assets {
+		require.NoError(t, store.CreateAsset(asset))
+	}
+
+	retrieved, err := store.ListAssetsBySource(SourceAuto)
+	require.NoError(t, err)
+	require.Len(t, retrieved, 1)
+	assert.Equal(t, "asset-auto", retrieved[0].ID)
+	assert.Equal(t, SourceAuto, retrieved[0].Source)
 }
 
 // ==================== AssetRelation Tests ====================
