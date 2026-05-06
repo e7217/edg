@@ -25,3 +25,11 @@ Store external identifiers in `external_ids` as string key/value pairs. Common k
 ## Attributes
 
 Use `attributes` for adapter-specific metadata that does not need indexed querying yet. Keep values as strings and avoid embedding large nested JSON payloads.
+
+## Metadata Change Events
+
+Subscribe to `platform.meta.*.changed` to react to asset and relation metadata changes. EDG Core publishes these events after successful store mutations only; failed create, update, or delete requests do not emit events.
+
+Events are best-effort plain NATS messages. On adapter startup, first request the current asset list through `platform.meta.asset.list`, then apply `platform.meta.asset.changed` and `platform.meta.relation.changed` events for incremental updates.
+
+See [Metadata Events](events.md) for the payload schema and examples.

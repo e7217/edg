@@ -18,6 +18,7 @@ type DataHandler struct {
 	js                nats.JetStreamContext // for publishing to JetStream
 	validatedSubject  string
 	deadLetterSubject string
+	events            *EventPublisher // for metadata change notifications
 }
 
 var (
@@ -35,18 +36,23 @@ type DeadLetterMessage struct {
 	Timestamp       time.Time       `json:"timestamp"`
 }
 
-func NewDataHandler(js nats.JetStreamContext, store *Store) *DataHandler {
+func NewDataHandler(js nats.JetStreamContext, store *Store, events ...*EventPublisher) *DataHandler {
+	var publisher *EventPublisher
+	if len(events) > 0 {
+		publisher = events[0]
+	}
 	return &DataHandler{
 		data:              make([]AssetData, 0),
 		store:             store,
 		js:                js,
 		validatedSubject:  DefaultValidatedDataSubject,
 		deadLetterSubject: DefaultDeadLetterSubject,
+		events:            publisher,
 	}
 }
 
-func NewDataHandlerWithSubjects(js nats.JetStreamContext, store *Store, validatedSubject, deadLetterSubject string) *DataHandler {
-	handler := NewDataHandler(js, store)
+func NewDataHandlerWithSubjects(js nats.JetStreamContext, store *Store, validatedSubject, deadLetterSubject string, events ...*EventPublisher) *DataHandler {
+	handler := NewDataHandler(js, store, events...)
 	if validatedSubject != "" {
 		handler.validatedSubject = validatedSubject
 	}
@@ -76,6 +82,12 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 				UpdatedAt: now,
 			}
 			if err := h.store.CreateAsset(asset); err == nil {
+				h.events.PublishAssetChanged(MetaChangeEvent{
+					EventType: EventCreated,
+					EntityID:  asset.ID,
+					Source:    SourceAuto,
+					After:     asset,
+				})
 				log.Printf("[Core] Auto-registered asset: %s", data.AssetID)
 			}
 		}
