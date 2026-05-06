@@ -8,6 +8,8 @@ nats:
 storage:
   metadata_db: ./data/metadata.db
   data_dir: ./data
+  migrations_dir: embedded
+  auto_migrate: true
 
 templates:
   dir: ./templates

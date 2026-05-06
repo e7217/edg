@@ -14,6 +14,7 @@ const (
 	SubjectAssetCreate  = "platform.meta.asset.create"
 	SubjectAssetGet     = "platform.meta.asset.get"
 	SubjectAssetList    = "platform.meta.asset.list"
+	SubjectAssetUpdate  = "platform.meta.asset.update"
 	SubjectAssetDelete  = "platform.meta.asset.delete"
 	SubjectTemplateList = "platform.meta.template.list"
 
@@ -44,6 +45,7 @@ func (h *MetaHandler) RegisterHandlers(nc *nats.Conn) error {
 		SubjectAssetCreate:  h.handleAssetCreate,
 		SubjectAssetGet:     h.handleAssetGet,
 		SubjectAssetList:    h.handleAssetList,
+		SubjectAssetUpdate:  h.handleAssetUpdate,
 		SubjectAssetDelete:  h.handleAssetDelete,
 		SubjectTemplateList: h.handleTemplateList,
 
@@ -95,9 +97,12 @@ func (h *MetaHandler) reply(msg *nats.Msg, resp Response) {
 
 // CreateAssetRequest is a request to create an asset
 type CreateAssetRequest struct {
-	Name         string   `json:"name"`
-	TemplateName string   `json:"template_name,omitempty"`
-	Labels       []string `json:"labels,omitempty"`
+	Name         string            `json:"name"`
+	TemplateName string            `json:"template_name,omitempty"`
+	Labels       []string          `json:"labels,omitempty"`
+	ExternalIDs  map[string]string `json:"external_ids,omitempty"`
+	Source       string            `json:"source,omitempty"`
+	Attributes   map[string]string `json:"attributes,omitempty"`
 }
 
 func (h *MetaHandler) handleAssetCreate(msg *nats.Msg) {
@@ -130,6 +135,9 @@ func (h *MetaHandler) handleAssetCreate(msg *nats.Msg) {
 		Name:         req.Name,
 		TemplateName: req.TemplateName,
 		Labels:       req.Labels,
+		ExternalIDs:  req.ExternalIDs,
+		Source:       req.Source,
+		Attributes:   req.Attributes,
 		CreatedAt:    time.Now(),
 	}
 
@@ -188,6 +196,73 @@ func (h *MetaHandler) handleAssetList(msg *nats.Msg) {
 	}
 
 	h.reply(msg, Response{Success: true, Data: assets})
+}
+
+// UpdateAssetRequest is a request to replace asset metadata.
+type UpdateAssetRequest struct {
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	TemplateName string            `json:"template_name,omitempty"`
+	Labels       []string          `json:"labels,omitempty"`
+	ExternalIDs  map[string]string `json:"external_ids,omitempty"`
+	Source       string            `json:"source,omitempty"`
+	Attributes   map[string]string `json:"attributes,omitempty"`
+}
+
+func (h *MetaHandler) handleAssetUpdate(msg *nats.Msg) {
+	var req UpdateAssetRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		h.reply(msg, Response{Success: false, Error: "invalid request format"})
+		return
+	}
+
+	if req.ID == "" {
+		h.reply(msg, Response{Success: false, Error: "id is required"})
+		return
+	}
+	if req.Name == "" {
+		h.reply(msg, Response{Success: false, Error: "name is required"})
+		return
+	}
+	if req.TemplateName != "" && !h.loader.Exists(req.TemplateName) {
+		h.reply(msg, Response{Success: false, Error: "template not found"})
+		return
+	}
+
+	existing, err := h.store.GetAsset(req.ID)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+	if existing == nil {
+		h.reply(msg, Response{Success: false, Error: "asset not found"})
+		return
+	}
+
+	asset := &Asset{
+		ID:           req.ID,
+		Name:         req.Name,
+		TemplateName: req.TemplateName,
+		Labels:       req.Labels,
+		ExternalIDs:  req.ExternalIDs,
+		Source:       req.Source,
+		Attributes:   req.Attributes,
+		CreatedAt:    existing.CreatedAt,
+	}
+
+	if err := h.store.UpdateAsset(asset); err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+
+	updated, err := h.store.GetAsset(req.ID)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+
+	log.Printf("[Meta] Asset updated: %s (%s)", updated.Name, updated.ID)
+	h.reply(msg, Response{Success: true, Data: updated})
 }
 
 // DeleteAssetRequest is a request to delete an asset

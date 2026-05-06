@@ -61,6 +61,7 @@ INSTALL_DIR=/custom/path ./install.sh
 
 ### EDG Core
 - **Data Storage**: `./data/metadata.db` (auto-created)
+- **Schema Migrations**: embedded migrations run automatically on startup
 - **Templates**: `./templates/` (optional)
 
 ### Telegraf
@@ -79,6 +80,66 @@ Incoming JSON from adapters:
   "values": [
     {"name": "temperature", "number": 25.5, "unit": "°C", "quality": "good"}
   ]
+}
+```
+
+## Asset Metadata
+
+EDG Core stores asset metadata in SQLite and exposes it through NATS metadata subjects.
+
+Asset records include:
+- `id`: stable asset identifier
+- `name`: unique display name
+- `template_name`: optional asset template
+- `labels`: optional list of tags
+- `external_ids`: optional key/value identifiers such as `irdi`, `eclass`, or `aas`
+- `source`: origin tag; core uses `manual` for explicit metadata creation and `auto` for data-plane auto-registration
+- `attributes`: optional free-form key/value metadata
+- `created_at` and `updated_at`: creation and last metadata update timestamps
+
+### Create Asset
+
+Subject: `platform.meta.asset.create`
+
+```json
+{
+  "name": "pump-101",
+  "template_name": "vibration-sensor",
+  "labels": ["line-a", "critical"],
+  "external_ids": {
+    "irdi": "0173-1#02-BAA120#008",
+    "aas": "aas://example/pump-101"
+  },
+  "source": "manual",
+  "attributes": {
+    "manufacturer": "ACME",
+    "model": "PX-10"
+  }
+}
+```
+
+If `source` is omitted, EDG Core stores `manual`.
+
+### Update Asset
+
+Subject: `platform.meta.asset.update`
+
+The update API replaces the asset's mutable metadata fields. Send the complete desired metadata state for the asset.
+
+```json
+{
+  "id": "pump-101",
+  "name": "pump-101",
+  "labels": ["line-a", "critical", "inspected"],
+  "external_ids": {
+    "aas": "aas://example/pump-101"
+  },
+  "source": "aas",
+  "attributes": {
+    "manufacturer": "ACME",
+    "model": "PX-10",
+    "area": "north"
+  }
 }
 ```
 
