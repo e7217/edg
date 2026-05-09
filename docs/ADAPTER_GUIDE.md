@@ -2,6 +2,15 @@
 
 This guide captures conventions for adapters that register or update metadata in EDG Core.
 
+## SDKs
+
+EDG ships two SDKs that wrap the NATS subject contract described below:
+
+- **Python** — [`adapters/python/sdk`](../adapters/python/sdk)
+- **Go** — [`adapters/go/sdk`](../adapters/go/sdk)
+
+Both SDKs cover the same surface (asset data publish, asset and relation CRUD, metadata change event subscription, device connect/reconnect hooks) and use the same wire format. Pick whichever fits your toolchain — adapters can also talk to the subjects directly without an SDK.
+
 ## Asset Source Values
 
 Set `source` to the system that supplied the asset metadata.
