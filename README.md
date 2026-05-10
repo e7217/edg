@@ -124,7 +124,7 @@ See [`adapters/go/sdk`](adapters/go/sdk) for the full SDK and runnable examples.
 
 ## Architecture
 
-![EDG Platform Architecture](docs/flow.drawio.png)
+![EDG Platform Architecture](docs/flow.png)
 
 <details>
 <summary>Mermaid</summary>

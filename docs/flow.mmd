@@ -1,0 +1,57 @@
+graph LR
+    Sensor["🌐 Sensors / Devices<br/>(Modbus, MQTT, OPC-UA)"]
+
+    subgraph Adapters["Adapter SDKs"]
+        PySDK["🐍 Python Adapter<br/>(BaseAdapter)"]
+        GoSDK["🐹 Go Adapter<br/>(NewAdapter)"]
+    end
+
+    subgraph Core["EDG Core (Go)"]
+        NATS{{"📨 Embedded NATS Server<br/>:4222"}}
+        Tmpl[/"📄 Template Loader<br/>(YAML Schemas)"/]
+        DH["🛡️ DataHandler<br/>(Validate &amp; Route)"]
+        MH["🗂️ MetaHandler<br/>(Asset CRUD API)"]
+    end
+
+    subgraph Persist["Persistence"]
+        JS{{"📨 JetStream<br/>(Durable Stream)"}}
+        DB[("💾 SQLite<br/>(Metadata DB)")]
+    end
+
+    Tg["📈 Telegraf<br/>(Metrics Collector)"]
+    VM[("📊 VictoriaMetrics<br/>(TSDB :8428)")]
+    GF["📺 Grafana<br/>(Dashboard :3000)"]
+
+    Sensor -->|Raw Data| PySDK
+    Sensor -->|Raw Data| GoSDK
+
+    PySDK -->|platform.data.asset| NATS
+    GoSDK -->|platform.data.asset| NATS
+
+    NATS -->|Subscribe| DH
+    Tmpl -.->|Validation Rules| DH
+    Tmpl -.->|NATS RPC| MH
+
+    DH ==>|platform.data.validated| JS
+    DH -.->|Auto-register| DB
+    MH ==>|CRUD| DB
+
+    JS ==>|Consume| Tg
+    Tg -->|InfluxDB v2 API| VM
+    VM -->|Query| GF
+
+    classDef adapter fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e293b;
+    classDef core fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e293b;
+    classDef sensor fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e293b;
+    classDef nats fill:#ede9fe,stroke:#7c3aed,stroke-width:1.5px,color:#1e293b;
+    classDef tmpl fill:#ffffff,stroke:#cbd5e1,stroke-width:1.5px,color:#1e293b;
+    classDef db fill:#d1fae5,stroke:#059669,stroke-width:1.5px,color:#1e293b;
+    classDef tg fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#1e293b;
+
+    class Sensor sensor;
+    class PySDK,GoSDK adapter;
+    class DH,MH core;
+    class NATS,JS nats;
+    class Tmpl tmpl;
+    class DB,VM db;
+    class Tg,GF tg;
