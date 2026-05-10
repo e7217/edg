@@ -1,0 +1,10 @@
+{
+  "asset_id": "sensor-001",
+  "timestamp": 1715299200000,
+  "values": [
+    {"name": "temperature", "quality": "GOOD", "number": 25.5, "unit": "°C"},
+    {"name": "status", "quality": "GOOD", "text": "running"},
+    {"name": "online", "quality": "GOOD", "flag": true}
+  ],
+  "metadata": {"location": "factory-a"}
+}

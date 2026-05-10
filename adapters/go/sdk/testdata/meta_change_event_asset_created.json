@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "event_type": "created",
+  "entity_type": "asset",
+  "entity_id": "sensor-001",
+  "source": "auto",
+  "timestamp": "2026-05-07T12:34:56Z",
+  "after": {
+    "id": "sensor-001",
+    "name": "sensor-001",
+    "source": "auto",
+    "created_at": "2026-05-07T12:34:56Z",
+    "updated_at": "2026-05-07T12:34:56Z"
+  }
+}
