@@ -18,7 +18,7 @@
 
 *   **Lightweight & Fast**: Built with Go and NATS for ultra-low latency.
 *   **Reliable**: Built-in data validation, auto-registration of assets, and documented JetStream durability boundaries.
-*   **Plug & Play**: Simple Python adapters for reading any sensor data.
+*   **Plug & Play**: Python or Go adapter SDKs for reading any sensor data.
 *   **Time-Series Ready**: Seamless integration with VictoriaMetrics/InfluxDB via Telegraf.
 
 ## Key Features
@@ -27,7 +27,7 @@
 *   **Metadata Change Events**: Publishes asset and relation changes on NATS for adapters and sidecars.
 *   **Data Validation**: Enforces schema and quality checks at the edge before data enters your storage.
 *   **At-Least-Once Delivery**: Uses NATS JetStream for durable delivery after core publish acknowledgement. See [ADR 0001](docs/adr/0001-data-plane-reliability.md) for the exact reliability boundary.
-*   **Flexible Adapters**: Easily write collectors in Python for Modbus, OPC-UA, or custom protocols.
+*   **Flexible Adapters**: Easily write collectors in Python or Go for Modbus, OPC-UA, or custom protocols.
 
 ## Quick Start
 
@@ -48,7 +48,10 @@ sudo systemctl start edg-telegraf
 If you are using docker-compose, you can also start Grafana (optional) for dashboards.
 
 ### 3. Send Data
-Use the Python SDK to send your first metric:
+Pick the SDK that fits your toolchain — both publish to the same NATS subject.
+
+<details open>
+<summary>Python</summary>
 
 ```python
 import asyncio, json
@@ -56,21 +59,68 @@ import nats
 
 async def main():
     nc = await nats.connect("nats://localhost:4222")
-    
-    # Send sensor data
+
     data = {
         "asset_id": "sensor-001",
         "values": [
             {"name": "temperature", "number": 25.5, "unit": "°C", "quality": "good"}
         ]
     }
-    
+
     await nc.publish("platform.data.asset", json.dumps(data).encode())
     print("Data sent!")
     await nc.close()
 
 asyncio.run(main())
 ```
+
+See [`adapters/python/sdk`](adapters/python/sdk) for the full SDK with adapter base class and reconnection.
+
+</details>
+
+<details>
+<summary>Go</summary>
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/e7217/edg/adapters/go/sdk"
+)
+
+type tempSensor struct{}
+
+func (tempSensor) Collect(_ context.Context) ([]sdk.TagValue, error) {
+    n := 25.5
+    return []sdk.TagValue{
+        {Name: "temperature", Quality: sdk.QualityGood, Number: &n, Unit: "°C"},
+    }, nil
+}
+
+func main() {
+    ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+    defer stop()
+
+    a := sdk.NewAdapter(sdk.AdapterConfig{
+        AssetID:         "sensor-001",
+        CollectInterval: time.Second,
+    }, tempSensor{})
+
+    if err := a.Run(ctx); err != nil {
+        log.Fatalf("adapter exited: %v", err)
+    }
+}
+```
+
+See [`adapters/go/sdk`](adapters/go/sdk) for the full SDK and runnable examples.
+
+</details>
 
 ## Architecture
 
@@ -81,7 +131,7 @@ asyncio.run(main())
 
 ```mermaid
 graph LR
-    Sensor[Sensor] -->|Python Adapter| NATS1[NATS: Ingest]
+    Sensor[Sensor] -->|Python / Go Adapter| NATS1[NATS: Ingest]
     NATS1 -->|Stream| Core[EDG Core]
     Core -->|Validation| NATS2[NATS: Validated]
     NATS2 -->|Consumer| Telegraf
@@ -93,7 +143,8 @@ graph LR
 ## Integrations
 
 ### Data Inputs
-*   **Python SDK**: Custom adapters for any sensor.
+*   **[Python SDK](adapters/python/sdk)**: Custom adapters for any sensor.
+*   **[Go SDK](adapters/go/sdk)**: Same surface as the Python SDK for Go-based adapters.
 *   **Standard Protocols**: Modbus, MQTT (Planned).
 
 ### Storage & Outputs
