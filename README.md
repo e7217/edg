@@ -145,7 +145,7 @@ graph LR
 ### Data Inputs
 *   **[Python SDK](adapters/python/sdk)**: Custom adapters for any sensor.
 *   **[Go SDK](adapters/go/sdk)**: Same surface as the Python SDK for Go-based adapters.
-*   **Standard Protocols**: Modbus, MQTT (Planned).
+*   **Standard Protocols**: Modbus TCP — reference adapters in [Python](adapters/python/examples/modbus_tcp) and [Go](adapters/go/sdk/examples/modbus_tcp_sensor). Modbus RTU, MQTT (Planned).
 
 ### Storage & Outputs
 *   **VictoriaMetrics**: High-performance time-series storage (Recommended).
