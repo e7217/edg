@@ -8,6 +8,10 @@ This document contains the license information for third-party software included
 |-----------|---------|---------|-----------|
 | Telegraf | 1.29.0 | MIT | 2015-2025 InfluxData Inc. |
 | VictoriaMetrics | 1.133.0 | Apache 2.0 | 2019-2025 VictoriaMetrics, Inc. |
+| pymodbus | 3.7+ | BSD-3-Clause | 2008-2025 Pymodbus |
+| PyYAML | 6.0+ | MIT | 2017-2024 Ingy döt Net, Kirill Simonov |
+| goburrow/modbus | 0.1.0 | BSD-3-Clause | Quoc-Viet Nguyen |
+| tbrandon/mbserver | (test only) | MIT | Travis Brandon |
 
 ---
 
@@ -258,6 +262,30 @@ The EDG Platform uses the following Go dependencies:
 | gopkg.in/yaml.v3 | MIT/Apache 2.0 | https://github.com/go-yaml/yaml |
 
 For complete dependency information, see `go.mod` in the EDG Platform repository.
+
+---
+
+## Adapter Example Dependencies
+
+These dependencies are used **only by the reference adapter examples** under `adapters/` and are not bundled with the EDG Core release. Adapter authors who copy an example into their own project should retain the relevant license notices.
+
+### Python Modbus TCP example (`adapters/python/examples/modbus_tcp`)
+
+| Dependency | License | Source |
+|-----------|---------|--------|
+| pymodbus | BSD-3-Clause | https://github.com/pymodbus-dev/pymodbus |
+| PyYAML | MIT | https://github.com/yaml/pyyaml |
+
+### Go Modbus TCP example (`adapters/go/sdk/examples/modbus_tcp_sensor`)
+
+| Dependency | License | Source |
+|-----------|---------|--------|
+| github.com/goburrow/modbus | BSD-3-Clause | https://github.com/goburrow/modbus |
+| github.com/goburrow/serial | BSD-3-Clause | https://github.com/goburrow/serial |
+| gopkg.in/yaml.v3 | MIT/Apache 2.0 | https://github.com/go-yaml/yaml |
+| github.com/tbrandon/mbserver | MIT | https://github.com/tbrandon/mbserver |
+
+Both `pymodbus` and `goburrow/modbus` are distributed under the BSD-3-Clause license, which is compatible with EDG's Apache 2.0 license. The BSD-3-Clause non-endorsement clause prohibits using the original author's name to promote derivative products without prior written consent; factual statements about library use are fine.
 
 ---
 

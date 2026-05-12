@@ -1,0 +1,40 @@
+# Sample Modbus TCP register mapping.
+#
+# Copy this file and edit `host`, `port`, `unit_id`, and `registers` to
+# match your device. Word-order (ABCD / CDAB / BADC / DCBA) follows the
+# convention printed in most PLC vendor manuals.
+
+version: 1
+host: 127.0.0.1
+port: 502
+unit_id: 1
+poll_interval: 1.0
+timeout: 1.0
+
+registers:
+  - name: temperature
+    function: holding
+    address: 0
+    type: int16
+    scale: 0.1
+    unit: "°C"
+
+  - name: humidity
+    function: holding
+    address: 1
+    type: uint16
+    scale: 0.1
+    unit: "%"
+
+  - name: flow_rate
+    function: input
+    address: 100
+    type: float32
+    word_order: ABCD
+    unit: "L/min"
+
+  - name: total_count
+    function: holding
+    address: 200
+    type: uint32
+    word_order: CDAB

@@ -1,0 +1,125 @@
+# Shared decoder fixture matrix used by both Python and Go decoder tests.
+# Each case lists the raw 16-bit register words returned by a Modbus device
+# and the expected decoded value for the given type and word_order.
+#
+# Word-order naming follows vendor manual convention:
+#   ABCD: bytes [A B C D] -> word0=AB, word1=CD (big-endian, normal)
+#   CDAB: words swapped -> word0=CD, word1=AB
+#   BADC: bytes swapped inside each word -> word0=BA, word1=DC
+#   DCBA: both swapped -> word0=DC, word1=BA
+#
+# For 16-bit types (uint16, int16) word_order is ignored.
+
+cases:
+  # ---- 16-bit unsigned ----
+  - name: uint16_zero
+    words: [0x0000]
+    type: uint16
+    expected: 0.0
+
+  - name: uint16_max
+    words: [0xFFFF]
+    type: uint16
+    expected: 65535.0
+
+  - name: uint16_with_scale
+    words: [0x0064]   # 100
+    type: uint16
+    scale: 0.1
+    expected: 10.0
+
+  # ---- 16-bit signed ----
+  - name: int16_positive
+    words: [0x0001]
+    type: int16
+    expected: 1.0
+
+  - name: int16_negative
+    words: [0xFFFF]
+    type: int16
+    expected: -1.0
+
+  - name: int16_min
+    words: [0x8000]
+    type: int16
+    expected: -32768.0
+
+  # ---- 32-bit unsigned, 4 word orders ----
+  # Logical value 0x12345678 = 305419896
+  - name: uint32_ABCD
+    words: [0x1234, 0x5678]
+    type: uint32
+    word_order: ABCD
+    expected: 305419896.0
+
+  - name: uint32_CDAB
+    words: [0x5678, 0x1234]
+    type: uint32
+    word_order: CDAB
+    expected: 305419896.0
+
+  - name: uint32_BADC
+    words: [0x3412, 0x7856]
+    type: uint32
+    word_order: BADC
+    expected: 305419896.0
+
+  - name: uint32_DCBA
+    words: [0x7856, 0x3412]
+    type: uint32
+    word_order: DCBA
+    expected: 305419896.0
+
+  # ---- 32-bit signed ----
+  # 0xFFFFFFFF = -1
+  - name: int32_negative_one_ABCD
+    words: [0xFFFF, 0xFFFF]
+    type: int32
+    word_order: ABCD
+    expected: -1.0
+
+  # 0x80000000 = -2147483648
+  - name: int32_min_ABCD
+    words: [0x8000, 0x0000]
+    type: int32
+    word_order: ABCD
+    expected: -2147483648.0
+
+  - name: int32_min_CDAB
+    words: [0x0000, 0x8000]
+    type: int32
+    word_order: CDAB
+    expected: -2147483648.0
+
+  # ---- float32 (IEEE 754 single) ----
+  # 3.14 ≈ 0x4048F5C3
+  - name: float32_pi_ABCD
+    words: [0x4048, 0xF5C3]
+    type: float32
+    word_order: ABCD
+    expected_approx: 3.14
+
+  - name: float32_pi_CDAB
+    words: [0xF5C3, 0x4048]
+    type: float32
+    word_order: CDAB
+    expected_approx: 3.14
+
+  - name: float32_pi_BADC
+    words: [0x4840, 0xC3F5]
+    type: float32
+    word_order: BADC
+    expected_approx: 3.14
+
+  - name: float32_pi_DCBA
+    words: [0xC3F5, 0x4840]
+    type: float32
+    word_order: DCBA
+    expected_approx: 3.14
+
+  - name: float32_with_scale
+    words: [0x4048, 0xF5C3]
+    type: float32
+    word_order: ABCD
+    scale: 10.0
+    expected_approx: 31.4
