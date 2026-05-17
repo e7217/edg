@@ -16,18 +16,19 @@
 
 ## Why EDG?
 
-*   **Lightweight & Fast**: Built with Go and NATS for ultra-low latency.
-*   **Reliable**: Built-in data validation, auto-registration of assets, and documented JetStream durability boundaries.
-*   **Plug & Play**: Python or Go adapter SDKs for reading any sensor data.
-*   **Time-Series Ready**: Seamless integration with VictoriaMetrics/InfluxDB via Telegraf.
+*   **Lightweight & Fast**: Single Go binary, embedded NATS, SQLite metadata. No external services required to run a node.
+*   **Explicit Reliability Boundary**: At-least-once delivery starts at the JetStream publish ack — operators know exactly where adapter retry or buffering is still needed. See [ADR 0001](docs/adr/0001-data-plane-reliability.md).
+*   **Semantic Asset Model**: First-class asset relations (`partOf`, `connectedTo`, `locatedIn`) and external identifiers (`irdi`, `eclass`, `aas`, `opcua_node_id`) — a foundation for digital twin work, not just point collection.
+*   **Wire-Contract First**: The integration contract is a small set of NATS subjects, not an SDK. Any language with a NATS client can publish data and subscribe to metadata events — Python and Go SDKs are conveniences for the common cases.
+*   **Time-Series Ready**: Telegraf templates for VictoriaMetrics / InfluxDB included. The validated stream is also available on NATS for any other consumer.
 
 ## Key Features
 
-*   **Automatic Asset Registration**: Device discovery and metadata registration without manual configuration.
-*   **Metadata Change Events**: Publishes asset and relation changes on NATS for adapters and sidecars.
-*   **Data Validation**: Enforces schema and quality checks at the edge before data enters your storage.
-*   **At-Least-Once Delivery**: Uses NATS JetStream for durable delivery after core publish acknowledgement. See [ADR 0001](docs/adr/0001-data-plane-reliability.md) for the exact reliability boundary.
-*   **Flexible Adapters**: Easily write collectors in Python or Go for Modbus, OPC-UA, or custom protocols.
+*   **Automatic Asset Registration**: Devices appear in the metadata store the first time they publish data — no manual provisioning step.
+*   **Metadata Change Events**: Asset and relation mutations are published on `platform.meta.*.changed` with `before` / `after` snapshots for reactive adapters and sidecars. See [Metadata Events](docs/events.md).
+*   **Edge-Side Data Validation**: Template-driven schema and quality checks applied before data reaches storage.
+*   **Dead-Letter Visibility**: Validated-publish failures are routed to `platform.data.deadletter` with expvar counters for monitoring.
+*   **Multi-Language Adapters**: Python SDK, Go SDK, or direct NATS publishing — pick the language that matches your protocol library.
 
 ## Quick Start
 
@@ -143,8 +144,9 @@ graph LR
 ## Integrations
 
 ### Data Inputs
-*   **[Python SDK](adapters/python/sdk)**: Custom adapters for any sensor.
-*   **[Go SDK](adapters/go/sdk)**: Same surface as the Python SDK for Go-based adapters.
+*   **[Python SDK](adapters/python/sdk)**: For Python-friendly protocols (Modbus via `pymodbus`, BACnet via `BACpypes`, EtherNet/IP via `pycomm3`, and others).
+*   **[Go SDK](adapters/go/sdk)**: Same surface as the Python SDK. Good fit for Go-native protocol libraries and single-binary deployments.
+*   **Any NATS client**: Adapters can publish to the NATS subjects directly without an EDG SDK. Useful for wrapping vendor C/C++ libraries (e.g. `opendnp3`, `lib60870`) as sidecars, or for niche languages.
 *   **Standard Protocols**: Modbus TCP — reference adapters in [Python](adapters/python/examples/modbus_tcp) and [Go](adapters/go/sdk/examples/modbus_tcp_sensor). Modbus RTU, MQTT (Planned).
 
 ### Storage & Outputs
