@@ -7,6 +7,7 @@ operator expectations, or compatibility.
 
 - [ADR 0001: Data Plane Reliability](0001-data-plane-reliability.md)
 - [ADR 0002: Ontology Enrichment and Traversal](0002-ontology-enrichment.md)
+- [ADR 0003: Relationship-Based Control and Conditional Triggers](0003-relationship-based-control.md)
 
 ## Format
 

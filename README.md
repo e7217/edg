@@ -163,8 +163,8 @@ We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
     *   Simple 1:1 Command/Response pattern.
     *   Secure execution of device commands via adapters.
 *   **Phase 2: Advanced Logic (Planned)**
-    *   Relationship-based control (Ontology).
-    *   Automated sequences and conditional triggers.
+    *   Relationship-based control (Ontology) - design in [ADR 0003](docs/adr/0003-relationship-based-control.md).
+    *   Automated sequences and conditional triggers - design in [ADR 0003](docs/adr/0003-relationship-based-control.md).
 
 ## Documentation
 
