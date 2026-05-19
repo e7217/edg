@@ -313,6 +313,51 @@ The in-memory window is intentionally short-lived. If the core process restarts,
 pending groups that have not yet been emitted are lost; durable alarm history is
 outside this PoC scope.
 
+## HTTP Metadata API
+
+EDG Core can expose a read-only HTTP API for browser dashboards and operator
+tools. It is disabled by default outside the development config.
+
+```yaml
+http:
+  enabled: true
+  address: 127.0.0.1:8080
+  token_env: EDG_HTTP_TOKEN
+  cors_allowed_origins:
+    - http://localhost:3000
+```
+
+If the environment variable named by `token_env` contains a value, requests must
+include `Authorization: Bearer <token>`. If the variable is unset, the API is
+anonymous and should remain bound to localhost.
+
+All responses use the same envelope as NATS metadata replies:
+
+```json
+{"success": true, "data": {}}
+```
+
+Available endpoints:
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/health` | Process health. |
+| `GET` | `/api/v1/version` | Build version metadata. |
+| `GET` | `/api/v1/assets?limit=100&offset=0` | List assets. |
+| `GET` | `/api/v1/assets/{id}` | Get one asset. |
+| `GET` | `/api/v1/assets/{id}/ancestors?relation_types=partOf,locatedIn&max_depth=10` | Traverse parents. |
+| `GET` | `/api/v1/assets/{id}/descendants?relation_types=partOf&max_depth=10` | Traverse children. |
+| `GET` | `/api/v1/assets/{id}/subtree?relation_types=partOf&max_depth=10` | Recursive tree. |
+| `GET` | `/api/v1/assets/{id}/connected?relation_type=connectedTo` | One-hop relation query. |
+| `GET` | `/api/v1/relations?source=&target=&type=` | List and filter relations. |
+
+Example:
+
+```bash
+curl -H "Authorization: Bearer $EDG_HTTP_TOKEN" \
+  "http://127.0.0.1:8080/api/v1/assets/factory-1/descendants?relation_types=partOf&max_depth=10"
+```
+
 ## Monitoring
 
 - **NATS Monitor**: http://localhost:8222

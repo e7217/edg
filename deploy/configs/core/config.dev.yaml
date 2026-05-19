@@ -28,6 +28,13 @@ alarm:
 constraints:
   enforcement: warn
 
+http:
+  enabled: true
+  address: 127.0.0.1:8080
+  token_env: EDG_HTTP_TOKEN
+  cors_allowed_origins:
+    - http://localhost:3000
+
 jetstream:
   validated_subject: platform.data.validated
   dead_letter_subject: platform.data.deadletter

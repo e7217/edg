@@ -461,6 +461,42 @@ func (s *Store) GetRelation(id string) (*AssetRelation, error) {
 	return &relation, nil
 }
 
+// ListRelations retrieves all asset relations.
+func (s *Store) ListRelations() ([]*AssetRelation, error) {
+	rows, err := s.db.Query(
+		`SELECT id, source_asset_id, target_asset_id, relation_type, created_at, metadata
+		 FROM asset_relations ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query relations: %w", err)
+	}
+	defer rows.Close()
+
+	var relations []*AssetRelation
+	for rows.Next() {
+		var relation AssetRelation
+		var metadataJSON sql.NullString
+		if err := rows.Scan(
+			&relation.ID, &relation.SourceAssetID, &relation.TargetAssetID,
+			&relation.RelationType, &relation.CreatedAt, &metadataJSON,
+		); err != nil {
+			return nil, err
+		}
+
+		if metadataJSON.Valid && metadataJSON.String != "" {
+			if err := json.Unmarshal([]byte(metadataJSON.String), &relation.Metadata); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal relation metadata: %w", err)
+			}
+		}
+
+		relations = append(relations, &relation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate relations: %w", err)
+	}
+	return relations, nil
+}
+
 // GetRelationsBySourceAsset retrieves all relations from a source asset
 func (s *Store) GetRelationsBySourceAsset(assetID string) ([]*AssetRelation, error) {
 	rows, err := s.db.Query(
