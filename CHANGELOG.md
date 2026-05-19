@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metadata change events for asset and relation create/update/delete notifications
 - Go SDK for adapter development at `adapters/go/sdk` with feature parity to the Python SDK
 - Modbus TCP reference adapter examples for Python (`adapters/python/examples/modbus_tcp`) and Go (`adapters/go/sdk/examples/modbus_tcp_sensor`) with YAML-driven register mapping, configurable word order, and integration tests against in-process Modbus TCP servers
+- Configurable asset registration mode for choosing automatic metadata creation or manual asset governance
 
 ### Changed
 

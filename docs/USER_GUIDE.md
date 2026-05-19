@@ -123,6 +123,20 @@ Incoming JSON from adapters:
 
 EDG Core stores asset metadata in SQLite and exposes it through NATS metadata subjects.
 
+### Asset Registration Modes
+
+EDG Core controls unknown asset handling with `asset_registration.mode`.
+
+| Mode | Behavior |
+| --- | --- |
+| `auto` | Default. Unknown `asset_id` values from data messages create Asset records with `source: "auto"` and publish an asset-created metadata event. |
+| `manual` | Unknown `asset_id` values continue through the validated data subject, but EDG Core does not create Asset records or publish asset-created metadata events. |
+
+```yaml
+asset_registration:
+  mode: auto
+```
+
 Asset records include:
 - `id`: stable asset identifier
 - `name`: unique display name

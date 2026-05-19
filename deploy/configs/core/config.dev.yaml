@@ -16,6 +16,11 @@ templates:
   dir: ./templates
   auto_reload: true
 
+asset_registration:
+  # auto creates Asset records for unknown asset_id values.
+  # manual keeps validated data flowing without creating Asset records.
+  mode: auto
+
 jetstream:
   validated_subject: platform.data.validated
   dead_letter_subject: platform.data.deadletter

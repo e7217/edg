@@ -133,13 +133,12 @@ func main() {
 
 	// 6. Create handlers and subscribe
 	eventPublisher := core.NewEventPublisher(nc)
-	dataHandler := core.NewDataHandlerWithSubjects(
-		js,
-		store,
-		cfg.JetStream.ValidatedSubject,
-		cfg.JetStream.DeadLetterSubject,
-		eventPublisher,
-	)
+	dataHandler := core.NewDataHandlerWithConfig(js, store, core.DataHandlerOptions{
+		ValidatedSubject:  cfg.JetStream.ValidatedSubject,
+		DeadLetterSubject: cfg.JetStream.DeadLetterSubject,
+		Events:            eventPublisher,
+		RegistrationMode:  cfg.AssetRegistration.Mode,
+	})
 	metaHandler := core.NewMetaHandler(store, loader, eventPublisher)
 
 	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
