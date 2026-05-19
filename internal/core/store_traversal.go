@@ -159,6 +159,110 @@ func (s *Store) GetSubtree(assetID string, relTypes []RelationType, maxDepth int
 	return rootNode, nil
 }
 
+func (s *Store) FindLowestCommonAncestor(assetIDs []string, relTypes []RelationType, maxDepth int) (*AssetNode, error) {
+	if len(assetIDs) == 0 {
+		return nil, nil
+	}
+
+	var common map[string]lcaCandidate
+	for i, assetID := range assetIDs {
+		candidates, err := s.lcaCandidates(assetID, relTypes, maxDepth)
+		if err != nil {
+			return nil, err
+		}
+		if len(candidates) == 0 {
+			return nil, nil
+		}
+
+		if i == 0 {
+			common = candidates
+			continue
+		}
+
+		for id, current := range common {
+			next, ok := candidates[id]
+			if !ok {
+				delete(common, id)
+				continue
+			}
+			if next.depth > current.maxDepth {
+				current.maxDepth = next.depth
+			}
+			current.totalDepth += next.depth
+			common[id] = current
+		}
+		if len(common) == 0 {
+			return nil, nil
+		}
+	}
+
+	var selected *lcaCandidate
+	for _, candidate := range common {
+		candidate := candidate
+		if selected == nil ||
+			candidate.maxDepth < selected.maxDepth ||
+			(candidate.maxDepth == selected.maxDepth && candidate.totalDepth < selected.totalDepth) ||
+			(candidate.maxDepth == selected.maxDepth && candidate.totalDepth == selected.totalDepth && candidate.node.ID < selected.node.ID) {
+			selected = &candidate
+		}
+	}
+	if selected == nil {
+		return nil, nil
+	}
+	node := *selected.node
+	node.Depth = selected.maxDepth
+	return &node, nil
+}
+
+type lcaCandidate struct {
+	node       *AssetNode
+	depth      int
+	maxDepth   int
+	totalDepth int
+}
+
+func (s *Store) lcaCandidates(assetID string, relTypes []RelationType, maxDepth int) (map[string]lcaCandidate, error) {
+	asset, err := s.GetAsset(assetID)
+	if err != nil {
+		return nil, err
+	}
+	if asset == nil {
+		return map[string]lcaCandidate{}, nil
+	}
+
+	nodes := map[string]lcaCandidate{
+		asset.ID: {
+			node: &AssetNode{
+				ID:           asset.ID,
+				Name:         asset.Name,
+				TemplateName: asset.TemplateName,
+				Depth:        0,
+			},
+			depth:      0,
+			maxDepth:   0,
+			totalDepth: 0,
+		},
+	}
+
+	ancestors, err := s.GetAncestors(assetID, relTypes, maxDepth)
+	if err != nil {
+		return nil, err
+	}
+	for _, ancestor := range ancestors {
+		if existing, ok := nodes[ancestor.ID]; ok && existing.depth <= ancestor.Depth {
+			continue
+		}
+		node := *ancestor
+		nodes[ancestor.ID] = lcaCandidate{
+			node:       &node,
+			depth:      ancestor.Depth,
+			maxDepth:   ancestor.Depth,
+			totalDepth: ancestor.Depth,
+		}
+	}
+	return nodes, nil
+}
+
 func (s *Store) queryAssetNodes(query string, args ...any) ([]*AssetNode, error) {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

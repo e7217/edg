@@ -237,6 +237,40 @@ If `relation_types` is omitted for tree traversal, core uses `partOf` and
 `locatedIn`. If `relation_type` is omitted for `connected`, core returns all
 one-hop relation types.
 
+## Alarm Impact Analysis
+
+Adapters and internal components can raise alarms by publishing JSON to
+`platform.alarm.raised`:
+
+```json
+{
+  "id": "alarm-001",
+  "asset_id": "pump-A",
+  "severity": "critical",
+  "code": "pump.offline",
+  "message": "Pump A offline"
+}
+```
+
+Core validates that the asset exists, computes downstream impact with the asset
+relation graph, and immediately publishes `platform.alarm.impact.computed`.
+Downstream impact uses `partOf` and `locatedIn`; one-hop `connectedTo` assets are
+included separately in `connected_asset_ids`.
+
+Short alarm floods are grouped in memory. When the grouping window closes, core
+publishes `platform.alarm.grouped` with the nearest common ancestor, alarm IDs,
+asset IDs, and highest severity in the group.
+
+```yaml
+alarm:
+  window_seconds: 5
+  max_traversal_depth: 10
+```
+
+The in-memory window is intentionally short-lived. If the core process restarts,
+pending groups that have not yet been emitted are lost; durable alarm history is
+outside this PoC scope.
+
 ## Monitoring
 
 - **NATS Monitor**: http://localhost:8222
