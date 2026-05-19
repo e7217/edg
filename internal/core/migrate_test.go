@@ -26,6 +26,8 @@ func TestRunMigrationsCreatesSchema(t *testing.T) {
 	assert.True(t, columnExists(t, db, "assets", "attributes"))
 	assert.True(t, columnExists(t, db, "assets", "updated_at"))
 	assert.True(t, indexExists(t, db, "idx_assets_source"))
+	assert.True(t, indexExists(t, db, "idx_relations_source_type"))
+	assert.True(t, indexExists(t, db, "idx_relations_target_type"))
 }
 
 func TestRunMigrationsPreservesV1Data(t *testing.T) {
@@ -63,6 +65,13 @@ func TestMigrationDownSteps(t *testing.T) {
 
 	require.NoError(t, runMigrations(db))
 	require.True(t, columnExists(t, db, "assets", "source"))
+	require.True(t, indexExists(t, db, "idx_relations_source_type"))
+
+	require.NoError(t, runMigrationSteps(db, -1))
+	assert.False(t, indexExists(t, db, "idx_relations_source_type"))
+	assert.False(t, indexExists(t, db, "idx_relations_target_type"))
+	assert.True(t, columnExists(t, db, "assets", "source"))
+	assert.True(t, tableExists(t, db, "assets"))
 
 	require.NoError(t, runMigrationSteps(db, -1))
 	assert.False(t, columnExists(t, db, "assets", "source"))

@@ -12,6 +12,11 @@ const (
 	SubjectAssetChanged    = "platform.meta.asset.changed"
 	SubjectRelationChanged = "platform.meta.relation.changed"
 
+	SubjectAssetAncestors   = "platform.meta.asset.ancestors"
+	SubjectAssetDescendants = "platform.meta.asset.descendants"
+	SubjectAssetSubtree     = "platform.meta.asset.subtree"
+	SubjectAssetConnected   = "platform.meta.asset.connected"
+
 	EventSchemaVersion = 1
 )
 

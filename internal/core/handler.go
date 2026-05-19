@@ -20,6 +20,7 @@ type DataHandler struct {
 	deadLetterSubject string
 	registrationMode  string
 	events            *EventPublisher // for metadata change notifications
+	enricher          *Enricher
 }
 
 var (
@@ -33,6 +34,7 @@ type DataHandlerOptions struct {
 	DeadLetterSubject string
 	Events            *EventPublisher
 	RegistrationMode  string
+	Enricher          *Enricher
 }
 
 // DeadLetterMessage records a failed core-to-JetStream publish attempt.
@@ -76,6 +78,7 @@ func NewDataHandlerWithConfig(js nats.JetStreamContext, store *Store, opts DataH
 		deadLetterSubject: deadLetterSubject,
 		registrationMode:  registrationMode,
 		events:            opts.Events,
+		enricher:          opts.Enricher,
 	}
 }
 
@@ -127,13 +130,24 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 		}
 	}
 
+	validatedData := msg.Data
+	if h.enricher != nil {
+		if err := h.enricher.Enrich(&data); err != nil {
+			log.Printf("[Core] Failed to enrich asset data: %v", err)
+		} else if enrichedData, err := json.Marshal(data); err != nil {
+			log.Printf("[Core] Failed to encode enriched asset data: %v", err)
+		} else {
+			validatedData = enrichedData
+		}
+	}
+
 	h.mu.Lock()
 	h.data = append(h.data, data)
 	h.mu.Unlock()
 
 	// Publish validated data to JetStream for persistence
 	if h.js != nil {
-		if _, err := h.js.Publish(h.validatedSubject, msg.Data); err != nil {
+		if _, err := h.js.Publish(h.validatedSubject, validatedData); err != nil {
 			jetStreamPublishFailures.Add(1)
 			log.Printf("[Core] Failed to publish to JetStream: %v", err)
 			h.publishDeadLetter(msg, err)

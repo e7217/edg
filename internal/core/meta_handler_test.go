@@ -770,6 +770,106 @@ func TestHandleRelationList_ByRelationType(t *testing.T) {
 	assert.Len(t, types, 2)
 }
 
+func TestMetaHandler_AssetAncestors(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store := newTraversalTestStore(t)
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetAncestors, AssetTraversalRequest{
+		AssetID:       "sensor-001",
+		RelationTypes: []RelationType{RelationPartOf},
+		MaxDepth:      10,
+	})
+	require.True(t, resp.Success, resp.Error)
+
+	var result AssetNodesResponse
+	require.NoError(t, json.Unmarshal(resp.Data, &result))
+	require.Len(t, result.Nodes, 3)
+	assert.Equal(t, "pump-a", result.Nodes[0].ID)
+	assert.Equal(t, "line-3", result.Nodes[1].ID)
+	assert.Equal(t, "factory-1", result.Nodes[2].ID)
+}
+
+func TestMetaHandler_AssetDescendants(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store := newTraversalTestStore(t)
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetDescendants, AssetTraversalRequest{
+		AssetID:       "factory-1",
+		RelationTypes: []RelationType{RelationPartOf},
+	})
+	require.True(t, resp.Success, resp.Error)
+
+	var result AssetNodesResponse
+	require.NoError(t, json.Unmarshal(resp.Data, &result))
+	require.Len(t, result.Nodes, 3)
+	assert.Equal(t, "line-3", result.Nodes[0].ID)
+	assert.Equal(t, "pump-a", result.Nodes[1].ID)
+	assert.Equal(t, "sensor-001", result.Nodes[2].ID)
+}
+
+func TestMetaHandler_AssetSubtree(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store := newTraversalTestStore(t)
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetSubtree, AssetTraversalRequest{
+		AssetID:       "factory-1",
+		RelationTypes: []RelationType{RelationPartOf},
+	})
+	require.True(t, resp.Success, resp.Error)
+
+	var root AssetTreeNode
+	require.NoError(t, json.Unmarshal(resp.Data, &root))
+	assert.Equal(t, "factory-1", root.ID)
+	require.Len(t, root.Children, 1)
+	assert.Equal(t, "line-3", root.Children[0].ID)
+}
+
+func TestMetaHandler_AssetConnected(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store := newTraversalTestStore(t)
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetConnected, AssetConnectedRequest{
+		AssetID:      "pump-a",
+		RelationType: RelationConnectedTo,
+	})
+	require.True(t, resp.Success, resp.Error)
+
+	var result AssetNodesResponse
+	require.NoError(t, json.Unmarshal(resp.Data, &result))
+	require.Len(t, result.Nodes, 1)
+	assert.Equal(t, "motor-1", result.Nodes[0].ID)
+}
+
+func TestMetaHandler_AssetTraversalRequiresAssetID(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store := newTraversalTestStore(t)
+	handler := NewMetaHandler(store, NewTemplateLoader())
+	require.NoError(t, handler.RegisterHandlers(nc))
+	require.NoError(t, nc.Flush())
+
+	resp := requestMeta(t, nc, SubjectAssetAncestors, AssetTraversalRequest{})
+
+	assert.False(t, resp.Success)
+	assert.Equal(t, "asset_id is required", resp.Error)
+}
+
 // TestHandleRelationDelete_Success tests successful relation deletion
 func TestHandleRelationDelete_Success(t *testing.T) {
 	store, err := NewStore(":memory:")

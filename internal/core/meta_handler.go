@@ -60,6 +60,11 @@ func (h *MetaHandler) RegisterHandlers(nc *nats.Conn) error {
 		SubjectRelationGet:    h.handleRelationGet,
 		SubjectRelationList:   h.handleRelationList,
 		SubjectRelationDelete: h.handleRelationDelete,
+
+		SubjectAssetAncestors:   h.handleAssetAncestors,
+		SubjectAssetDescendants: h.handleAssetDescendants,
+		SubjectAssetSubtree:     h.handleAssetSubtree,
+		SubjectAssetConnected:   h.handleAssetConnected,
 	}
 
 	for subject, handler := range handlers {
@@ -77,6 +82,24 @@ type Response struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   string      `json:"error,omitempty"`
+}
+
+// AssetTraversalRequest is a graph traversal request for an asset.
+type AssetTraversalRequest struct {
+	AssetID       string         `json:"asset_id"`
+	RelationTypes []RelationType `json:"relation_types,omitempty"`
+	MaxDepth      int            `json:"max_depth,omitempty"`
+}
+
+// AssetConnectedRequest is a one-hop connected asset request.
+type AssetConnectedRequest struct {
+	AssetID      string       `json:"asset_id"`
+	RelationType RelationType `json:"relation_type,omitempty"`
+}
+
+// AssetNodesResponse wraps traversal node lists.
+type AssetNodesResponse struct {
+	Nodes []*AssetNode `json:"nodes"`
 }
 
 // marshalResponse marshals response with fallback on error
@@ -329,6 +352,89 @@ func (h *MetaHandler) handleAssetDelete(msg *nats.Msg) {
 func (h *MetaHandler) handleTemplateList(msg *nats.Msg) {
 	templates := h.loader.List()
 	h.reply(msg, Response{Success: true, Data: templates})
+}
+
+func (h *MetaHandler) handleAssetAncestors(msg *nats.Msg) {
+	var req AssetTraversalRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		h.reply(msg, Response{Success: false, Error: "invalid request format"})
+		return
+	}
+	if req.AssetID == "" {
+		h.reply(msg, Response{Success: false, Error: "asset_id is required"})
+		return
+	}
+
+	nodes, err := h.store.GetAncestors(req.AssetID, traversalRelationTypesOrDefault(req.RelationTypes), req.MaxDepth)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+	h.reply(msg, Response{Success: true, Data: AssetNodesResponse{Nodes: nodes}})
+}
+
+func (h *MetaHandler) handleAssetDescendants(msg *nats.Msg) {
+	var req AssetTraversalRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		h.reply(msg, Response{Success: false, Error: "invalid request format"})
+		return
+	}
+	if req.AssetID == "" {
+		h.reply(msg, Response{Success: false, Error: "asset_id is required"})
+		return
+	}
+
+	nodes, err := h.store.GetDescendants(req.AssetID, traversalRelationTypesOrDefault(req.RelationTypes), req.MaxDepth)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+	h.reply(msg, Response{Success: true, Data: AssetNodesResponse{Nodes: nodes}})
+}
+
+func (h *MetaHandler) handleAssetSubtree(msg *nats.Msg) {
+	var req AssetTraversalRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		h.reply(msg, Response{Success: false, Error: "invalid request format"})
+		return
+	}
+	if req.AssetID == "" {
+		h.reply(msg, Response{Success: false, Error: "asset_id is required"})
+		return
+	}
+
+	tree, err := h.store.GetSubtree(req.AssetID, traversalRelationTypesOrDefault(req.RelationTypes), req.MaxDepth)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+	h.reply(msg, Response{Success: true, Data: tree})
+}
+
+func (h *MetaHandler) handleAssetConnected(msg *nats.Msg) {
+	var req AssetConnectedRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		h.reply(msg, Response{Success: false, Error: "invalid request format"})
+		return
+	}
+	if req.AssetID == "" {
+		h.reply(msg, Response{Success: false, Error: "asset_id is required"})
+		return
+	}
+
+	nodes, err := h.store.GetConnected(req.AssetID, req.RelationType)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+	h.reply(msg, Response{Success: true, Data: AssetNodesResponse{Nodes: nodes}})
+}
+
+func traversalRelationTypesOrDefault(relTypes []RelationType) []RelationType {
+	if len(relTypes) == 0 {
+		return DefaultHierarchicalRelationTypes()
+	}
+	return relTypes
 }
 
 // ==================== AssetRelation Handlers ====================

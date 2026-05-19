@@ -150,6 +150,64 @@ func TestHandleAssetData_WithJetStreamAndStore(t *testing.T) {
 	assert.Equal(t, 1, handler.GetDataCount())
 }
 
+func TestHandleAssetData_WithEnricherPublishesMetadata(t *testing.T) {
+	_, nc, js := startTestNATSServer(t, true)
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "ENRICHED_STREAM",
+		Subjects: []string{"platform.data.>"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	store := newTraversalTestStore(t)
+	handler := NewDataHandlerWithConfig(js, store, DataHandlerOptions{
+		Enricher: NewEnricher(store, EnricherOptions{}),
+	})
+
+	received := make(chan *nats.Msg, 1)
+	sub, err := nc.Subscribe("platform.data.validated", func(msg *nats.Msg) {
+		received <- msg
+	})
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+	require.NoError(t, nc.Flush())
+
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID:   "sensor-001",
+		Timestamp: 1234567890,
+		Values: []TagValue{
+			{Name: "temperature", Number: &tempValue, Unit: "celsius"},
+		},
+	}
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{
+		Subject: "platform.data.asset",
+		Data:    jsonData,
+	})
+
+	select {
+	case receivedMsg := <-received:
+		var enriched AssetData
+		require.NoError(t, json.Unmarshal(receivedMsg.Data, &enriched))
+		require.NotNil(t, enriched.Metadata)
+		assert.Equal(t, "Factory 1", enriched.Metadata["factory"])
+		assert.Equal(t, "Line 3", enriched.Metadata["line"])
+		assert.Equal(t, "Pump A", enriched.Metadata["equipment"])
+		assert.Equal(t, "Room 9", enriched.Metadata["room"])
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for enriched published message")
+	}
+
+	handler.mu.Lock()
+	require.Len(t, handler.data, 1)
+	assert.Equal(t, "Factory 1", handler.data[0].Metadata["factory"])
+	handler.mu.Unlock()
+}
+
 func TestHandleAssetData_ManualModePublishesValidatedData(t *testing.T) {
 	_, nc, js := startTestNATSServer(t, true)
 
