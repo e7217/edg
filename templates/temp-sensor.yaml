@@ -6,3 +6,9 @@ resources:
   - name: humidity
     valueType: NUMBER
     unit: "%"
+constraints:
+  required_relations:
+    - type: partOf
+      target_template: equipment
+      min: 1
+      max: 1

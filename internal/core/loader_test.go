@@ -29,6 +29,9 @@ func TestLoadFromFile_Success(t *testing.T) {
 	assert.Equal(t, ValueTypeText, template.Resources[1].ValueType)
 	assert.Equal(t, "enabled", template.Resources[2].Name)
 	assert.Equal(t, ValueTypeFlag, template.Resources[2].ValueType)
+	require.Len(t, template.Constraints.RequiredRelations, 1)
+	assert.Equal(t, RelationPartOf, template.Constraints.RequiredRelations[0].Type)
+	assert.Equal(t, "equipment", template.Constraints.RequiredRelations[0].TargetTemplate)
 }
 
 // TestLoadFromFile_InvalidYAML tests handling of malformed YAML
@@ -64,6 +67,25 @@ func TestLoadFromDir_FailsOnInvalidFile(t *testing.T) {
 	err := loader.LoadFromDir("testdata")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "template name is missing")
+}
+
+func TestLoadFromDir_FailsOnUnknownConstraintTargetTemplate(t *testing.T) {
+	loader := NewTemplateLoader()
+	tmpDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(tmpDir, "sensor.yaml"), []byte(`
+name: sensor
+resources: []
+constraints:
+  required_relations:
+    - type: partOf
+      target_template: missing-template
+`), 0644)
+	require.NoError(t, err)
+
+	err = loader.LoadFromDir(tmpDir)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown target_template")
 }
 
 // TestValidateAssetData_Success tests successful data validation

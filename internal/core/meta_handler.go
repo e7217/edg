@@ -11,12 +11,13 @@ import (
 
 // NATS subjects
 const (
-	SubjectAssetCreate  = "platform.meta.asset.create"
-	SubjectAssetGet     = "platform.meta.asset.get"
-	SubjectAssetList    = "platform.meta.asset.list"
-	SubjectAssetUpdate  = "platform.meta.asset.update"
-	SubjectAssetDelete  = "platform.meta.asset.delete"
-	SubjectTemplateList = "platform.meta.template.list"
+	SubjectAssetCreate      = "platform.meta.asset.create"
+	SubjectAssetGet         = "platform.meta.asset.get"
+	SubjectAssetList        = "platform.meta.asset.list"
+	SubjectAssetUpdate      = "platform.meta.asset.update"
+	SubjectAssetDelete      = "platform.meta.asset.delete"
+	SubjectTemplateList     = "platform.meta.template.list"
+	SubjectConstraintsCheck = "platform.meta.constraints.check"
 
 	// Relation subjects
 	SubjectRelationCreate = "platform.meta.relation.create"
@@ -27,9 +28,16 @@ const (
 
 // MetaHandler handles metadata NATS messages
 type MetaHandler struct {
-	store  *Store
-	loader *TemplateLoader
-	events *EventPublisher
+	store                 *Store
+	loader                *TemplateLoader
+	events                *EventPublisher
+	constraints           *ConstraintsEvaluator
+	constraintEnforcement string
+}
+
+type MetaHandlerOptions struct {
+	Events                *EventPublisher
+	ConstraintEnforcement string
 }
 
 // NewMetaHandler creates a new handler
@@ -38,22 +46,36 @@ func NewMetaHandler(store *Store, loader *TemplateLoader, events ...*EventPublis
 	if len(events) > 0 {
 		publisher = events[0]
 	}
+	return NewMetaHandlerWithOptions(store, loader, MetaHandlerOptions{
+		Events:                publisher,
+		ConstraintEnforcement: ConstraintsEnforcementWarn,
+	})
+}
+
+func NewMetaHandlerWithOptions(store *Store, loader *TemplateLoader, opts MetaHandlerOptions) *MetaHandler {
+	enforcement := opts.ConstraintEnforcement
+	if enforcement == "" {
+		enforcement = ConstraintsEnforcementWarn
+	}
 	return &MetaHandler{
-		store:  store,
-		loader: loader,
-		events: publisher,
+		store:                 store,
+		loader:                loader,
+		events:                opts.Events,
+		constraints:           NewConstraintsEvaluator(loader),
+		constraintEnforcement: enforcement,
 	}
 }
 
 // RegisterHandlers registers NATS subscriptions
 func (h *MetaHandler) RegisterHandlers(nc *nats.Conn) error {
 	handlers := map[string]nats.MsgHandler{
-		SubjectAssetCreate:  h.handleAssetCreate,
-		SubjectAssetGet:     h.handleAssetGet,
-		SubjectAssetList:    h.handleAssetList,
-		SubjectAssetUpdate:  h.handleAssetUpdate,
-		SubjectAssetDelete:  h.handleAssetDelete,
-		SubjectTemplateList: h.handleTemplateList,
+		SubjectAssetCreate:      h.handleAssetCreate,
+		SubjectAssetGet:         h.handleAssetGet,
+		SubjectAssetList:        h.handleAssetList,
+		SubjectAssetUpdate:      h.handleAssetUpdate,
+		SubjectAssetDelete:      h.handleAssetDelete,
+		SubjectTemplateList:     h.handleTemplateList,
+		SubjectConstraintsCheck: h.handleConstraintsCheck,
 
 		// Relation handlers
 		SubjectRelationCreate: h.handleRelationCreate,
@@ -437,6 +459,56 @@ func traversalRelationTypesOrDefault(relTypes []RelationType) []RelationType {
 	return relTypes
 }
 
+func (h *MetaHandler) handleConstraintsCheck(msg *nats.Msg) {
+	report, err := h.constraints.CheckAll(h.store)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+	h.reply(msg, Response{Success: true, Data: report})
+}
+
+func (h *MetaHandler) checkRelationConstraints(relation *AssetRelation) ([]ConstraintViolation, error) {
+	if h == nil || h.constraintEnforcement == ConstraintsEnforcementDisabled || h.constraints == nil || relation == nil {
+		return nil, nil
+	}
+
+	assetIDs := []string{relation.SourceAssetID, relation.TargetAssetID}
+	seen := map[string]bool{}
+	var violations []ConstraintViolation
+	for _, assetID := range assetIDs {
+		if seen[assetID] {
+			continue
+		}
+		seen[assetID] = true
+		asset, err := h.store.GetAsset(assetID)
+		if err != nil {
+			return nil, err
+		}
+		if asset == nil {
+			continue
+		}
+		assetViolations, err := h.constraints.Check(asset, h.store)
+		if err != nil {
+			return nil, err
+		}
+		violations = append(violations, assetViolations...)
+	}
+	return violations, nil
+}
+
+func (h *MetaHandler) allowConstraintViolations(violations []ConstraintViolation) bool {
+	if len(violations) == 0 || h.constraintEnforcement == ConstraintsEnforcementDisabled {
+		return true
+	}
+	for _, violation := range violations {
+		violation.EnforcementMode = h.constraintEnforcement
+		h.events.PublishConstraintViolation(violation)
+		log.Printf("[Meta] Constraint violation: %s", violation.Message)
+	}
+	return h.constraintEnforcement != ConstraintsEnforcementEnforce
+}
+
 // ==================== AssetRelation Handlers ====================
 
 // CreateRelationRequest is a request to create a relation
@@ -487,6 +559,16 @@ func (h *MetaHandler) handleRelationCreate(msg *nats.Msg) {
 
 	if err := h.store.CreateRelation(relation); err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+
+	if violations, err := h.checkRelationConstraints(relation); err != nil {
+		_ = h.store.DeleteRelation(relation.ID)
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	} else if !h.allowConstraintViolations(violations) {
+		_ = h.store.DeleteRelation(relation.ID)
+		h.reply(msg, Response{Success: false, Error: constraintsViolationError(violations)})
 		return
 	}
 

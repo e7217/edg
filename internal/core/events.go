@@ -21,6 +21,8 @@ const (
 	SubjectAlarmImpactComputed = "platform.alarm.impact.computed"
 	SubjectAlarmGrouped        = "platform.alarm.grouped"
 
+	SubjectConstraintsViolation = "platform.meta.constraints.violation"
+
 	EventSchemaVersion = 1
 )
 
@@ -72,6 +74,10 @@ func (p *EventPublisher) PublishAlarmImpactComputed(impact AlarmImpact) {
 
 func (p *EventPublisher) PublishAlarmGrouped(group AlarmGroup) {
 	p.publishJSON(SubjectAlarmGrouped, group)
+}
+
+func (p *EventPublisher) PublishConstraintViolation(violation ConstraintViolation) {
+	p.publishJSON(SubjectConstraintsViolation, violation)
 }
 
 func (p *EventPublisher) publishMetaChange(subject string, ev MetaChangeEvent) {
