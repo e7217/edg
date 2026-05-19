@@ -25,6 +25,9 @@ alarm:
   window_seconds: 5
   max_traversal_depth: 10
 
+constraints:
+  enforcement: warn
+
 jetstream:
   validated_subject: platform.data.validated
   dead_letter_subject: platform.data.deadletter

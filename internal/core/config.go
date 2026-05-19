@@ -28,6 +28,7 @@ type CoreConfig struct {
 	JetStream         JetStreamConfig         `yaml:"jetstream"`
 	AssetRegistration AssetRegistrationConfig `yaml:"asset_registration"`
 	Alarm             AlarmConfig             `yaml:"alarm"`
+	Constraints       ConstraintsConfig       `yaml:"constraints"`
 }
 
 type NATSConfig struct {
@@ -67,6 +68,10 @@ type AssetRegistrationConfig struct {
 type AlarmConfig struct {
 	WindowSeconds     int `yaml:"window_seconds"`
 	MaxTraversalDepth int `yaml:"max_traversal_depth"`
+}
+
+type ConstraintsConfig struct {
+	Enforcement string `yaml:"enforcement"`
 }
 
 type JetStreamStreamConfig struct {
@@ -123,6 +128,9 @@ func DefaultCoreConfig() CoreConfig {
 		Alarm: AlarmConfig{
 			WindowSeconds:     int(DefaultAlarmWindow / time.Second),
 			MaxTraversalDepth: DefaultTraversalMaxDepth,
+		},
+		Constraints: ConstraintsConfig{
+			Enforcement: ConstraintsEnforcementWarn,
 		},
 	}
 }
@@ -186,6 +194,9 @@ func (c *CoreConfig) applyDefaults() {
 	if c.Alarm.MaxTraversalDepth == 0 {
 		c.Alarm.MaxTraversalDepth = defaults.Alarm.MaxTraversalDepth
 	}
+	if c.Constraints.Enforcement == "" {
+		c.Constraints.Enforcement = defaults.Constraints.Enforcement
+	}
 	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
 }
 
@@ -200,6 +211,11 @@ func (c CoreConfig) validate() error {
 	}
 	if c.Alarm.MaxTraversalDepth <= 0 {
 		return fmt.Errorf("invalid alarm.max_traversal_depth: %d (must be > 0)", c.Alarm.MaxTraversalDepth)
+	}
+	switch c.Constraints.Enforcement {
+	case ConstraintsEnforcementWarn, ConstraintsEnforcementEnforce, ConstraintsEnforcementDisabled:
+	default:
+		return fmt.Errorf("invalid constraints.enforcement: %q (allowed: warn, enforce, disabled)", c.Constraints.Enforcement)
 	}
 	return nil
 }

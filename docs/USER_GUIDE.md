@@ -237,6 +237,48 @@ If `relation_types` is omitted for tree traversal, core uses `partOf` and
 `locatedIn`. If `relation_type` is omitted for `connected`, core returns all
 one-hop relation types.
 
+### Template Constraints
+
+Templates can declare static relationship constraints. These constraints are
+checked after relation changes and by the catalog check subject.
+
+```yaml
+name: temp-sensor
+resources:
+  - name: temperature
+    valueType: NUMBER
+constraints:
+  required_relations:
+    - type: partOf
+      target_template: equipment
+      min: 1
+      max: 1
+  forbidden_relations:
+    - type: connectedTo
+      target_template: factory
+```
+
+`required_relations` counts outgoing relations from the asset to assets with the
+target template. `forbidden_relations` rejects any matching outgoing relation.
+If `min` is omitted for a required relation, the default is `1`; if `max` is
+omitted, there is no upper bound.
+
+The enforcement mode is configured in core YAML:
+
+```yaml
+constraints:
+  enforcement: warn # warn, enforce, or disabled
+```
+
+`warn` is the default and publishes `platform.meta.constraints.violation` while
+allowing the metadata write. `enforce` rejects the relation change and rolls it
+back. `disabled` skips constraint checks. To inspect the whole catalog, request
+`platform.meta.constraints.check` or run:
+
+```bash
+edg-core --check-constraints --config /opt/edg/config.yaml
+```
+
 ## Alarm Impact Analysis
 
 Adapters and internal components can raise alarms by publishing JSON to

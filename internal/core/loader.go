@@ -45,7 +45,7 @@ func (l *TemplateLoader) LoadFromDir(dir string) error {
 		}
 	}
 
-	return nil
+	return validateTemplateConstraints(l)
 }
 
 // LoadFromFile loads a template from a single YAML file

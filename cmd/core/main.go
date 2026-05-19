@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -26,6 +27,7 @@ func main() {
 	// Parse command-line flags
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
 	migrateDownFlag := flag.Int("migrate-down", 0, "Rollback metadata DB by N migration steps and exit")
+	checkConstraintsFlag := flag.Bool("check-constraints", false, "Check catalog template constraints and exit")
 	configFlag := flag.String("config", os.Getenv("EDG_CORE_CONFIG"), "Path to core configuration file")
 	flag.Parse()
 
@@ -53,6 +55,20 @@ func main() {
 			log.Fatalf("Failed to rollback metadata DB: %v", err)
 		}
 		log.Printf("[Core] Rolled back metadata DB by %d migration step(s)", *migrateDownFlag)
+		os.Exit(0)
+	}
+
+	if *checkConstraintsFlag {
+		report, err := checkConstraints(cfg)
+		if err != nil {
+			log.Fatalf("Failed to check constraints: %v", err)
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			log.Fatalf("Failed to write constraints report: %v", err)
+		}
+		if report.ViolationCount > 0 {
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -148,7 +164,10 @@ func main() {
 		RegistrationMode:  cfg.AssetRegistration.Mode,
 		Enricher:          enricher,
 	})
-	metaHandler := core.NewMetaHandler(store, loader, eventPublisher)
+	metaHandler := core.NewMetaHandlerWithOptions(store, loader, core.MetaHandlerOptions{
+		Events:                eventPublisher,
+		ConstraintEnforcement: cfg.Constraints.Enforcement,
+	})
 	alarmHandler := core.NewAlarmHandler(store, eventPublisher, core.AlarmHandlerOptions{
 		Window:            time.Duration(cfg.Alarm.WindowSeconds) * time.Second,
 		MaxTraversalDepth: cfg.Alarm.MaxTraversalDepth,
@@ -176,6 +195,21 @@ func main() {
 	log.Println("[Core] Shutting down...")
 	nc.Drain()
 	ns.Shutdown()
+}
+
+func checkConstraints(cfg core.CoreConfig) (core.ConstraintsReport, error) {
+	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	if err != nil {
+		return core.ConstraintsReport{}, err
+	}
+	defer store.Close()
+
+	loader := core.NewTemplateLoader()
+	if err := loader.LoadFromDir(cfg.Templates.Dir); err != nil {
+		return core.ConstraintsReport{}, err
+	}
+
+	return core.NewConstraintsEvaluator(loader).CheckAll(store)
 }
 
 func discoverConfigPath() string {

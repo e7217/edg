@@ -39,6 +39,12 @@ func TestDefaultCoreConfig_Alarm(t *testing.T) {
 	assert.Equal(t, DefaultTraversalMaxDepth, cfg.Alarm.MaxTraversalDepth)
 }
 
+func TestDefaultCoreConfig_Constraints(t *testing.T) {
+	cfg := DefaultCoreConfig()
+
+	assert.Equal(t, ConstraintsEnforcementWarn, cfg.Constraints.Enforcement)
+}
+
 func TestLoadCoreConfig_JetStreamPolicyFromYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
@@ -121,6 +127,20 @@ alarm:
 	assert.Equal(t, 4, cfg.Alarm.MaxTraversalDepth)
 }
 
+func TestLoadCoreConfig_ConstraintsFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+constraints:
+  enforcement: enforce
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, ConstraintsEnforcementEnforce, cfg.Constraints.Enforcement)
+}
+
 func TestLoadCoreConfig_RejectsInvalidAssetRegistrationMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
@@ -147,6 +167,20 @@ alarm:
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid alarm.window_seconds")
+}
+
+func TestLoadCoreConfig_RejectsInvalidConstraintsEnforcement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+constraints:
+  enforcement: audit
+`), 0644)
+	require.NoError(t, err)
+
+	_, err = LoadCoreConfig(path)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid constraints.enforcement")
 }
 
 func TestJetStreamStreamConfig_NATSConfigRejectsInvalidPolicies(t *testing.T) {

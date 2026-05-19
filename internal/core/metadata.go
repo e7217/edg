@@ -22,8 +22,9 @@ const (
 
 // AssetTemplate defines an asset type loaded from YAML
 type AssetTemplate struct {
-	Name      string          `yaml:"name" json:"name"`
-	Resources []AssetResource `yaml:"resources" json:"resources"`
+	Name        string              `yaml:"name" json:"name"`
+	Resources   []AssetResource     `yaml:"resources" json:"resources"`
+	Constraints TemplateConstraints `yaml:"constraints,omitempty" json:"constraints,omitempty"`
 }
 
 // AssetResource defines a data point provided by an asset
@@ -39,3 +40,17 @@ const (
 	ValueTypeText   = "TEXT"
 	ValueTypeFlag   = "FLAG"
 )
+
+// TemplateConstraints defines static relationship constraints for an asset type.
+type TemplateConstraints struct {
+	RequiredRelations  []RelationConstraint `yaml:"required_relations,omitempty" json:"required_relations,omitempty"`
+	ForbiddenRelations []RelationConstraint `yaml:"forbidden_relations,omitempty" json:"forbidden_relations,omitempty"`
+}
+
+// RelationConstraint describes a relation type and target template cardinality.
+type RelationConstraint struct {
+	Type           RelationType `yaml:"type" json:"type"`
+	TargetTemplate string       `yaml:"target_template" json:"target_template"`
+	Min            *int         `yaml:"min,omitempty" json:"min,omitempty"`
+	Max            *int         `yaml:"max,omitempty" json:"max,omitempty"`
+}
