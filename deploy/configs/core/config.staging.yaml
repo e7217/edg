@@ -16,6 +16,10 @@ templates:
   dir: /etc/edg/templates
   auto_reload: true
 
+alarm:
+  window_seconds: 5
+  max_traversal_depth: 10
+
 jetstream:
   validated_subject: platform.data.validated
   dead_letter_subject: platform.data.deadletter

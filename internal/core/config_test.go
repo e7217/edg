@@ -32,6 +32,13 @@ func TestDefaultCoreConfig_AssetRegistrationMode(t *testing.T) {
 	assert.Equal(t, RegistrationModeAuto, cfg.AssetRegistration.Mode)
 }
 
+func TestDefaultCoreConfig_Alarm(t *testing.T) {
+	cfg := DefaultCoreConfig()
+
+	assert.Equal(t, 5, cfg.Alarm.WindowSeconds)
+	assert.Equal(t, DefaultTraversalMaxDepth, cfg.Alarm.MaxTraversalDepth)
+}
+
 func TestLoadCoreConfig_JetStreamPolicyFromYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
@@ -98,6 +105,22 @@ asset_registration:
 	assert.Equal(t, RegistrationModeManual, cfg.AssetRegistration.Mode)
 }
 
+func TestLoadCoreConfig_AlarmFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+alarm:
+  window_seconds: 2
+  max_traversal_depth: 4
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, cfg.Alarm.WindowSeconds)
+	assert.Equal(t, 4, cfg.Alarm.MaxTraversalDepth)
+}
+
 func TestLoadCoreConfig_RejectsInvalidAssetRegistrationMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
@@ -110,6 +133,20 @@ asset_registration:
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `invalid asset_registration.mode: "disabled"`)
+}
+
+func TestLoadCoreConfig_RejectsInvalidAlarmConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+alarm:
+  window_seconds: -1
+`), 0644)
+	require.NoError(t, err)
+
+	_, err = LoadCoreConfig(path)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid alarm.window_seconds")
 }
 
 func TestJetStreamStreamConfig_NATSConfigRejectsInvalidPolicies(t *testing.T) {

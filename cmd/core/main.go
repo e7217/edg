@@ -149,6 +149,10 @@ func main() {
 		Enricher:          enricher,
 	})
 	metaHandler := core.NewMetaHandler(store, loader, eventPublisher)
+	alarmHandler := core.NewAlarmHandler(store, eventPublisher, core.AlarmHandlerOptions{
+		Window:            time.Duration(cfg.Alarm.WindowSeconds) * time.Second,
+		MaxTraversalDepth: cfg.Alarm.MaxTraversalDepth,
+	})
 
 	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
 	if err != nil {
@@ -157,6 +161,9 @@ func main() {
 
 	if err := metaHandler.RegisterHandlers(nc); err != nil {
 		log.Fatalf("Failed to register meta handlers: %v", err)
+	}
+	if err := alarmHandler.RegisterHandlers(nc); err != nil {
+		log.Fatalf("Failed to register alarm handlers: %v", err)
 	}
 
 	log.Println("[Core] Subscribed to: platform.data.asset")

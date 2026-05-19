@@ -21,6 +21,10 @@ asset_registration:
   # manual keeps validated data flowing without creating Asset records.
   mode: auto
 
+alarm:
+  window_seconds: 5
+  max_traversal_depth: 10
+
 jetstream:
   validated_subject: platform.data.validated
   dead_letter_subject: platform.data.deadletter

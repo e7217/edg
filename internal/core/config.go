@@ -27,6 +27,7 @@ type CoreConfig struct {
 	Logging           LoggingConfig           `yaml:"logging"`
 	JetStream         JetStreamConfig         `yaml:"jetstream"`
 	AssetRegistration AssetRegistrationConfig `yaml:"asset_registration"`
+	Alarm             AlarmConfig             `yaml:"alarm"`
 }
 
 type NATSConfig struct {
@@ -61,6 +62,11 @@ type JetStreamConfig struct {
 
 type AssetRegistrationConfig struct {
 	Mode string `yaml:"mode"`
+}
+
+type AlarmConfig struct {
+	WindowSeconds     int `yaml:"window_seconds"`
+	MaxTraversalDepth int `yaml:"max_traversal_depth"`
 }
 
 type JetStreamStreamConfig struct {
@@ -113,6 +119,10 @@ func DefaultCoreConfig() CoreConfig {
 		},
 		AssetRegistration: AssetRegistrationConfig{
 			Mode: RegistrationModeAuto,
+		},
+		Alarm: AlarmConfig{
+			WindowSeconds:     int(DefaultAlarmWindow / time.Second),
+			MaxTraversalDepth: DefaultTraversalMaxDepth,
 		},
 	}
 }
@@ -170,16 +180,28 @@ func (c *CoreConfig) applyDefaults() {
 	if c.AssetRegistration.Mode == "" {
 		c.AssetRegistration.Mode = defaults.AssetRegistration.Mode
 	}
+	if c.Alarm.WindowSeconds == 0 {
+		c.Alarm.WindowSeconds = defaults.Alarm.WindowSeconds
+	}
+	if c.Alarm.MaxTraversalDepth == 0 {
+		c.Alarm.MaxTraversalDepth = defaults.Alarm.MaxTraversalDepth
+	}
 	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
 }
 
 func (c CoreConfig) validate() error {
 	switch c.AssetRegistration.Mode {
 	case RegistrationModeAuto, RegistrationModeManual:
-		return nil
 	default:
 		return fmt.Errorf("invalid asset_registration.mode: %q (allowed: auto, manual)", c.AssetRegistration.Mode)
 	}
+	if c.Alarm.WindowSeconds <= 0 {
+		return fmt.Errorf("invalid alarm.window_seconds: %d (must be > 0)", c.Alarm.WindowSeconds)
+	}
+	if c.Alarm.MaxTraversalDepth <= 0 {
+		return fmt.Errorf("invalid alarm.max_traversal_depth: %d (must be > 0)", c.Alarm.MaxTraversalDepth)
+	}
+	return nil
 }
 
 func (c *JetStreamStreamConfig) applyDefaults(defaults JetStreamStreamConfig) {

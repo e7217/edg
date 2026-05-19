@@ -17,6 +17,10 @@ const (
 	SubjectAssetSubtree     = "platform.meta.asset.subtree"
 	SubjectAssetConnected   = "platform.meta.asset.connected"
 
+	SubjectAlarmRaised         = "platform.alarm.raised"
+	SubjectAlarmImpactComputed = "platform.alarm.impact.computed"
+	SubjectAlarmGrouped        = "platform.alarm.grouped"
+
 	EventSchemaVersion = 1
 )
 
@@ -62,19 +66,31 @@ func (p *EventPublisher) PublishRelationChanged(ev MetaChangeEvent) {
 	p.publishMetaChange(SubjectRelationChanged, normalizeMetaChangeEvent(ev, EntityRelation))
 }
 
+func (p *EventPublisher) PublishAlarmImpactComputed(impact AlarmImpact) {
+	p.publishJSON(SubjectAlarmImpactComputed, impact)
+}
+
+func (p *EventPublisher) PublishAlarmGrouped(group AlarmGroup) {
+	p.publishJSON(SubjectAlarmGrouped, group)
+}
+
 func (p *EventPublisher) publishMetaChange(subject string, ev MetaChangeEvent) {
+	p.publishJSON(subject, ev)
+}
+
+func (p *EventPublisher) publishJSON(subject string, payload any) {
 	if p == nil || p.nc == nil {
 		return
 	}
 
-	data, err := json.Marshal(ev)
+	data, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[Meta] Failed to marshal metadata change event: %v", err)
+		log.Printf("[Events] Failed to marshal event for %s: %v", subject, err)
 		return
 	}
 
 	if err := p.nc.Publish(subject, data); err != nil {
-		log.Printf("[Meta] Failed to publish metadata change event to %s: %v", subject, err)
+		log.Printf("[Events] Failed to publish event to %s: %v", subject, err)
 	}
 }
 
