@@ -131,8 +131,8 @@ triggers:
         max_depth: 3
 ```
 
-The rule expression language will be finalized by ADR 0004. Until then, the
-control design treats rule evaluation as an interface:
+The rule expression language is defined by ADR 0004. The control design treats
+rule evaluation as an interface:
 
 ```go
 type RuleEngine interface {
