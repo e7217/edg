@@ -18,6 +18,7 @@ type DataHandler struct {
 	js                nats.JetStreamContext // for publishing to JetStream
 	validatedSubject  string
 	deadLetterSubject string
+	registrationMode  string
 	events            *EventPublisher // for metadata change notifications
 }
 
@@ -26,6 +27,13 @@ var (
 	jetStreamDeadLetters     = expvar.NewInt("edg_core_jetstream_dead_letters")
 	jetStreamDeadLetterFails = expvar.NewInt("edg_core_jetstream_dead_letter_failures")
 )
+
+type DataHandlerOptions struct {
+	ValidatedSubject  string
+	DeadLetterSubject string
+	Events            *EventPublisher
+	RegistrationMode  string
+}
 
 // DeadLetterMessage records a failed core-to-JetStream publish attempt.
 type DeadLetterMessage struct {
@@ -41,25 +49,46 @@ func NewDataHandler(js nats.JetStreamContext, store *Store, events ...*EventPubl
 	if len(events) > 0 {
 		publisher = events[0]
 	}
+	return NewDataHandlerWithConfig(js, store, DataHandlerOptions{
+		Events: publisher,
+	})
+}
+
+func NewDataHandlerWithConfig(js nats.JetStreamContext, store *Store, opts DataHandlerOptions) *DataHandler {
+	validatedSubject := opts.ValidatedSubject
+	if validatedSubject == "" {
+		validatedSubject = DefaultValidatedDataSubject
+	}
+	deadLetterSubject := opts.DeadLetterSubject
+	if deadLetterSubject == "" {
+		deadLetterSubject = DefaultDeadLetterSubject
+	}
+	registrationMode := opts.RegistrationMode
+	if registrationMode == "" {
+		registrationMode = RegistrationModeAuto
+	}
+
 	return &DataHandler{
 		data:              make([]AssetData, 0),
 		store:             store,
 		js:                js,
-		validatedSubject:  DefaultValidatedDataSubject,
-		deadLetterSubject: DefaultDeadLetterSubject,
-		events:            publisher,
+		validatedSubject:  validatedSubject,
+		deadLetterSubject: deadLetterSubject,
+		registrationMode:  registrationMode,
+		events:            opts.Events,
 	}
 }
 
 func NewDataHandlerWithSubjects(js nats.JetStreamContext, store *Store, validatedSubject, deadLetterSubject string, events ...*EventPublisher) *DataHandler {
-	handler := NewDataHandler(js, store, events...)
-	if validatedSubject != "" {
-		handler.validatedSubject = validatedSubject
+	var publisher *EventPublisher
+	if len(events) > 0 {
+		publisher = events[0]
 	}
-	if deadLetterSubject != "" {
-		handler.deadLetterSubject = deadLetterSubject
-	}
-	return handler
+	return NewDataHandlerWithConfig(js, store, DataHandlerOptions{
+		ValidatedSubject:  validatedSubject,
+		DeadLetterSubject: deadLetterSubject,
+		Events:            publisher,
+	})
 }
 
 // HandleAssetData processes incoming NATS messages
@@ -70,25 +99,30 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 		return
 	}
 
-	// Auto-register asset if not exists
+	// Register metadata for unknown assets only when automatic registration is enabled.
 	if h.store != nil {
 		if exists, _ := h.store.AssetExists(data.AssetID); !exists {
-			now := time.Now()
-			asset := &Asset{
-				ID:        data.AssetID,
-				Name:      data.AssetID,
-				Source:    SourceAuto,
-				CreatedAt: now,
-				UpdatedAt: now,
-			}
-			if err := h.store.CreateAsset(asset); err == nil {
-				h.events.PublishAssetChanged(MetaChangeEvent{
-					EventType: EventCreated,
-					EntityID:  asset.ID,
+			switch h.registrationMode {
+			case RegistrationModeAuto:
+				now := time.Now()
+				asset := &Asset{
+					ID:        data.AssetID,
+					Name:      data.AssetID,
 					Source:    SourceAuto,
-					After:     asset,
-				})
-				log.Printf("[Core] Auto-registered asset: %s", data.AssetID)
+					CreatedAt: now,
+					UpdatedAt: now,
+				}
+				if err := h.store.CreateAsset(asset); err == nil {
+					h.events.PublishAssetChanged(MetaChangeEvent{
+						EventType: EventCreated,
+						EntityID:  asset.ID,
+						Source:    SourceAuto,
+						After:     asset,
+					})
+					log.Printf("[Core] Auto-registered asset: %s", data.AssetID)
+				}
+			case RegistrationModeManual:
+				log.Printf("[Core] unregistered asset (manual mode): %s", data.AssetID)
 			}
 		}
 	}

@@ -94,6 +94,38 @@ func TestHandleAssetData_AutoRegister(t *testing.T) {
 	assert.False(t, asset.UpdatedAt.IsZero())
 }
 
+func TestHandleAssetData_ManualMode_DoesNotRegister(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
+		RegistrationMode: RegistrationModeManual,
+	})
+
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID:   "manual-sensor",
+		Timestamp: 1234567890,
+		Values: []TagValue{
+			{Name: "temperature", Number: &tempValue},
+		},
+	}
+
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{
+		Subject: "platform.data.raw",
+		Data:    jsonData,
+	})
+
+	asset, err := store.GetAsset("manual-sensor")
+	require.NoError(t, err)
+	assert.Nil(t, asset)
+	assert.Equal(t, 1, handler.GetDataCount())
+}
+
 func TestNewDataHandlerWithSubjects(t *testing.T) {
 	handler := NewDataHandlerWithSubjects(nil, nil, "custom.validated", "custom.deadletter")
 
@@ -104,6 +136,27 @@ func TestNewDataHandlerWithSubjects(t *testing.T) {
 	defaults := NewDataHandlerWithSubjects(nil, nil, "", "")
 	assert.Equal(t, DefaultValidatedDataSubject, defaults.validatedSubject)
 	assert.Equal(t, DefaultDeadLetterSubject, defaults.deadLetterSubject)
+}
+
+func TestNewDataHandlerWithConfig(t *testing.T) {
+	publisher := NewEventPublisher(nil)
+	handler := NewDataHandlerWithConfig(nil, nil, DataHandlerOptions{
+		ValidatedSubject:  "custom.validated",
+		DeadLetterSubject: "custom.deadletter",
+		Events:            publisher,
+		RegistrationMode:  RegistrationModeManual,
+	})
+
+	require.NotNil(t, handler)
+	assert.Equal(t, "custom.validated", handler.validatedSubject)
+	assert.Equal(t, "custom.deadletter", handler.deadLetterSubject)
+	assert.Equal(t, RegistrationModeManual, handler.registrationMode)
+	assert.Same(t, publisher, handler.events)
+
+	defaults := NewDataHandlerWithConfig(nil, nil, DataHandlerOptions{})
+	assert.Equal(t, DefaultValidatedDataSubject, defaults.validatedSubject)
+	assert.Equal(t, DefaultDeadLetterSubject, defaults.deadLetterSubject)
+	assert.Equal(t, RegistrationModeAuto, defaults.registrationMode)
 }
 
 func TestNewDataHandlerWithSubjectsAndEvents(t *testing.T) {
@@ -158,6 +211,37 @@ func TestHandleAssetData_AutoRegisterPublishesChangedEvent(t *testing.T) {
 	assert.Equal(t, SourceAuto, after.Source)
 }
 
+func TestHandleAssetData_ManualMode_NoChangeEvent(t *testing.T) {
+	_, nc, _ := startTestNATSServer(t, false)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
+	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
+		Events:           NewEventPublisher(nc),
+		RegistrationMode: RegistrationModeManual,
+	})
+
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID: "manual-event-sensor",
+		Values: []TagValue{
+			{Name: "temperature", Number: &tempValue},
+		},
+	}
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{Data: jsonData})
+
+	requireNoMetaEvent(t, assetEvents)
+	asset, err := store.GetAsset("manual-event-sensor")
+	require.NoError(t, err)
+	assert.Nil(t, asset)
+}
+
 // TestHandleAssetData_ExistingAssetDoesNotPublishChangedEvent tests existing asset ingestion.
 func TestHandleAssetData_ExistingAssetDoesNotPublishChangedEvent(t *testing.T) {
 	_, nc, _ := startTestNATSServer(t, false)
@@ -188,6 +272,44 @@ func TestHandleAssetData_ExistingAssetDoesNotPublishChangedEvent(t *testing.T) {
 
 	handler.HandleAssetData(&nats.Msg{Data: jsonData})
 	requireNoMetaEvent(t, assetEvents)
+}
+
+func TestHandleAssetData_ManualMode_ExistingAssetUnaffected(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	createdAt := time.Now().Add(-time.Hour)
+	require.NoError(t, store.CreateAsset(&Asset{
+		ID:        "existing-manual-sensor",
+		Name:      "Existing Manual Sensor",
+		Source:    SourceManual,
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+	}))
+
+	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
+		RegistrationMode: RegistrationModeManual,
+	})
+
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID: "existing-manual-sensor",
+		Values: []TagValue{
+			{Name: "temperature", Number: &tempValue},
+		},
+	}
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{Data: jsonData})
+
+	asset, err := store.GetAsset("existing-manual-sensor")
+	require.NoError(t, err)
+	require.NotNil(t, asset)
+	assert.Equal(t, "Existing Manual Sensor", asset.Name)
+	assert.Equal(t, SourceManual, asset.Source)
+	assert.Equal(t, 1, handler.GetDataCount())
 }
 
 // TestGetDataCount tests thread-safe data count

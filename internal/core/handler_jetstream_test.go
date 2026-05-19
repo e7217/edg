@@ -150,6 +150,62 @@ func TestHandleAssetData_WithJetStreamAndStore(t *testing.T) {
 	assert.Equal(t, 1, handler.GetDataCount())
 }
 
+func TestHandleAssetData_ManualModePublishesValidatedData(t *testing.T) {
+	_, nc, js := startTestNATSServer(t, true)
+
+	_, err := js.AddStream(&nats.StreamConfig{
+		Name:     "MANUAL_MODE_STREAM",
+		Subjects: []string{"platform.data.>"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	handler := NewDataHandlerWithConfig(js, store, DataHandlerOptions{
+		RegistrationMode: RegistrationModeManual,
+	})
+
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID:   "manual-jetstream-sensor",
+		Timestamp: 1234567890,
+		Values: []TagValue{
+			{Name: "temperature", Number: &tempValue, Unit: "celsius"},
+		},
+	}
+
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	received := make(chan *nats.Msg, 1)
+	sub, err := nc.Subscribe("platform.data.validated", func(msg *nats.Msg) {
+		received <- msg
+	})
+	require.NoError(t, err)
+	defer sub.Unsubscribe()
+	require.NoError(t, nc.Flush())
+
+	handler.HandleAssetData(&nats.Msg{
+		Subject: "platform.data.asset",
+		Data:    jsonData,
+	})
+
+	select {
+	case receivedMsg := <-received:
+		assert.Equal(t, jsonData, receivedMsg.Data)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Timeout waiting for published message")
+	}
+
+	asset, err := store.GetAsset("manual-jetstream-sensor")
+	require.NoError(t, err)
+	assert.Nil(t, asset)
+	assert.Equal(t, 1, handler.GetDataCount())
+}
+
 // TestJetStreamPublish_MessagePersistence tests message persistence in JetStream
 func TestJetStreamPublish_MessagePersistence(t *testing.T) {
 	_, _, js := startTestNATSServer(t, true)

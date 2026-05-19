@@ -26,6 +26,12 @@ func TestDefaultCoreConfig_JetStreamPolicy(t *testing.T) {
 	assert.True(t, cfg.Storage.AutoMigrate)
 }
 
+func TestDefaultCoreConfig_AssetRegistrationMode(t *testing.T) {
+	cfg := DefaultCoreConfig()
+
+	assert.Equal(t, RegistrationModeAuto, cfg.AssetRegistration.Mode)
+}
+
 func TestLoadCoreConfig_JetStreamPolicyFromYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
@@ -76,6 +82,34 @@ jetstream:
 	assert.Equal(t, nats.MemoryStorage, streamConfig.Storage)
 	assert.Equal(t, nats.DiscardNew, streamConfig.Discard)
 	assert.Equal(t, nats.LimitsPolicy, streamConfig.Retention)
+}
+
+func TestLoadCoreConfig_AssetRegistrationModeFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+asset_registration:
+  mode: manual
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, RegistrationModeManual, cfg.AssetRegistration.Mode)
+}
+
+func TestLoadCoreConfig_RejectsInvalidAssetRegistrationMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+asset_registration:
+  mode: disabled
+`), 0644)
+	require.NoError(t, err)
+
+	_, err = LoadCoreConfig(path)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `invalid asset_registration.mode: "disabled"`)
 }
 
 func TestJetStreamStreamConfig_NATSConfigRejectsInvalidPolicies(t *testing.T) {

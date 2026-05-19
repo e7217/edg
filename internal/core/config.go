@@ -14,13 +14,19 @@ const (
 	DefaultDeadLetterSubject    = "platform.data.deadletter"
 )
 
+const (
+	RegistrationModeAuto   = "auto"
+	RegistrationModeManual = "manual"
+)
+
 // CoreConfig contains runtime settings for the embedded core process.
 type CoreConfig struct {
-	NATS      NATSConfig      `yaml:"nats"`
-	Storage   StorageConfig   `yaml:"storage"`
-	Templates TemplateConfig  `yaml:"templates"`
-	Logging   LoggingConfig   `yaml:"logging"`
-	JetStream JetStreamConfig `yaml:"jetstream"`
+	NATS              NATSConfig              `yaml:"nats"`
+	Storage           StorageConfig           `yaml:"storage"`
+	Templates         TemplateConfig          `yaml:"templates"`
+	Logging           LoggingConfig           `yaml:"logging"`
+	JetStream         JetStreamConfig         `yaml:"jetstream"`
+	AssetRegistration AssetRegistrationConfig `yaml:"asset_registration"`
 }
 
 type NATSConfig struct {
@@ -51,6 +57,10 @@ type JetStreamConfig struct {
 	Stream            JetStreamStreamConfig `yaml:"stream"`
 	ValidatedSubject  string                `yaml:"validated_subject"`
 	DeadLetterSubject string                `yaml:"dead_letter_subject"`
+}
+
+type AssetRegistrationConfig struct {
+	Mode string `yaml:"mode"`
 }
 
 type JetStreamStreamConfig struct {
@@ -101,6 +111,9 @@ func DefaultCoreConfig() CoreConfig {
 				Discard:   "old",
 			},
 		},
+		AssetRegistration: AssetRegistrationConfig{
+			Mode: RegistrationModeAuto,
+		},
 	}
 }
 
@@ -118,6 +131,9 @@ func LoadCoreConfig(path string) (CoreConfig, error) {
 		return cfg, fmt.Errorf("failed to parse core config: %w", err)
 	}
 	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
+		return cfg, err
+	}
 	return cfg, nil
 }
 
@@ -151,7 +167,19 @@ func (c *CoreConfig) applyDefaults() {
 	if c.JetStream.DeadLetterSubject == "" {
 		c.JetStream.DeadLetterSubject = defaults.JetStream.DeadLetterSubject
 	}
+	if c.AssetRegistration.Mode == "" {
+		c.AssetRegistration.Mode = defaults.AssetRegistration.Mode
+	}
 	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
+}
+
+func (c CoreConfig) validate() error {
+	switch c.AssetRegistration.Mode {
+	case RegistrationModeAuto, RegistrationModeManual:
+		return nil
+	default:
+		return fmt.Errorf("invalid asset_registration.mode: %q (allowed: auto, manual)", c.AssetRegistration.Mode)
+	}
 }
 
 func (c *JetStreamStreamConfig) applyDefaults(defaults JetStreamStreamConfig) {
