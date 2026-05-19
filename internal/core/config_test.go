@@ -45,6 +45,14 @@ func TestDefaultCoreConfig_Constraints(t *testing.T) {
 	assert.Equal(t, ConstraintsEnforcementWarn, cfg.Constraints.Enforcement)
 }
 
+func TestDefaultCoreConfig_HTTP(t *testing.T) {
+	cfg := DefaultCoreConfig()
+
+	assert.False(t, cfg.HTTP.Enabled)
+	assert.Equal(t, "127.0.0.1:8080", cfg.HTTP.Address)
+	assert.Equal(t, "EDG_HTTP_TOKEN", cfg.HTTP.TokenEnv)
+}
+
 func TestLoadCoreConfig_JetStreamPolicyFromYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
@@ -139,6 +147,27 @@ constraints:
 	require.NoError(t, err)
 
 	assert.Equal(t, ConstraintsEnforcementEnforce, cfg.Constraints.Enforcement)
+}
+
+func TestLoadCoreConfig_HTTPFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+http:
+  enabled: true
+  address: 127.0.0.1:9090
+  token_env: CUSTOM_HTTP_TOKEN
+  cors_allowed_origins:
+    - http://localhost:3000
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.True(t, cfg.HTTP.Enabled)
+	assert.Equal(t, "127.0.0.1:9090", cfg.HTTP.Address)
+	assert.Equal(t, "CUSTOM_HTTP_TOKEN", cfg.HTTP.TokenEnv)
+	assert.Equal(t, []string{"http://localhost:3000"}, cfg.HTTP.CORSAllowedOrigins)
 }
 
 func TestLoadCoreConfig_RejectsInvalidAssetRegistrationMode(t *testing.T) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/e7217/edg/internal/core"
+	"github.com/e7217/edg/internal/httpapi"
 )
 
 var (
@@ -172,6 +174,25 @@ func main() {
 		Window:            time.Duration(cfg.Alarm.WindowSeconds) * time.Second,
 		MaxTraversalDepth: cfg.Alarm.MaxTraversalDepth,
 	})
+	serviceCtx, stopServices := context.WithCancel(context.Background())
+	defer stopServices()
+
+	if cfg.HTTP.Enabled {
+		httpServer := httpapi.NewServer(store, httpapi.Options{
+			Address:            cfg.HTTP.Address,
+			TokenEnv:           cfg.HTTP.TokenEnv,
+			CORSAllowedOrigins: cfg.HTTP.CORSAllowedOrigins,
+			Version:            Version,
+			BuildTime:          BuildTime,
+			GitCommit:          GitCommit,
+		})
+		go func() {
+			log.Printf("[Core] HTTP API listening on http://%s", cfg.HTTP.Address)
+			if err := httpServer.Run(serviceCtx); err != nil {
+				log.Printf("[Core] HTTP API stopped: %v", err)
+			}
+		}()
+	}
 
 	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
 	if err != nil {
@@ -193,6 +214,7 @@ func main() {
 	<-quit
 
 	log.Println("[Core] Shutting down...")
+	stopServices()
 	nc.Drain()
 	ns.Shutdown()
 }

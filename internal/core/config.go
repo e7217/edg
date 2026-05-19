@@ -29,6 +29,7 @@ type CoreConfig struct {
 	AssetRegistration AssetRegistrationConfig `yaml:"asset_registration"`
 	Alarm             AlarmConfig             `yaml:"alarm"`
 	Constraints       ConstraintsConfig       `yaml:"constraints"`
+	HTTP              HTTPConfig              `yaml:"http"`
 }
 
 type NATSConfig struct {
@@ -72,6 +73,13 @@ type AlarmConfig struct {
 
 type ConstraintsConfig struct {
 	Enforcement string `yaml:"enforcement"`
+}
+
+type HTTPConfig struct {
+	Enabled            bool     `yaml:"enabled"`
+	Address            string   `yaml:"address"`
+	TokenEnv           string   `yaml:"token_env"`
+	CORSAllowedOrigins []string `yaml:"cors_allowed_origins"`
 }
 
 type JetStreamStreamConfig struct {
@@ -131,6 +139,11 @@ func DefaultCoreConfig() CoreConfig {
 		},
 		Constraints: ConstraintsConfig{
 			Enforcement: ConstraintsEnforcementWarn,
+		},
+		HTTP: HTTPConfig{
+			Enabled:  false,
+			Address:  "127.0.0.1:8080",
+			TokenEnv: "EDG_HTTP_TOKEN",
 		},
 	}
 }
@@ -197,6 +210,12 @@ func (c *CoreConfig) applyDefaults() {
 	if c.Constraints.Enforcement == "" {
 		c.Constraints.Enforcement = defaults.Constraints.Enforcement
 	}
+	if c.HTTP.Address == "" {
+		c.HTTP.Address = defaults.HTTP.Address
+	}
+	if c.HTTP.TokenEnv == "" {
+		c.HTTP.TokenEnv = defaults.HTTP.TokenEnv
+	}
 	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
 }
 
@@ -216,6 +235,9 @@ func (c CoreConfig) validate() error {
 	case ConstraintsEnforcementWarn, ConstraintsEnforcementEnforce, ConstraintsEnforcementDisabled:
 	default:
 		return fmt.Errorf("invalid constraints.enforcement: %q (allowed: warn, enforce, disabled)", c.Constraints.Enforcement)
+	}
+	if c.HTTP.Enabled && c.HTTP.Address == "" {
+		return fmt.Errorf("http.address is required when http.enabled is true")
 	}
 	return nil
 }
