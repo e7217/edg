@@ -193,6 +193,50 @@ The update API replaces the asset's mutable metadata fields. Send the complete d
 }
 ```
 
+## Asset Relations
+
+EDG Core stores directed asset relations and uses them to enrich validated data.
+For `partOf` and `locatedIn`, the source asset is the child and the target asset
+is the parent or location.
+
+When an asset publishes data, core looks up its `partOf` and `locatedIn`
+ancestors before publishing to `platform.data.validated`. Each ancestor with a
+`template_name` becomes a metadata tag where the key is `template_name` and the
+value is the ancestor asset name. Existing adapter-provided metadata keys are
+preserved.
+
+Example validated payload:
+
+```json
+{
+  "asset_id": "sensor-001",
+  "metadata": {
+    "equipment": "pump-A",
+    "line": "line-3",
+    "factory": "factory-1"
+  },
+  "values": [
+    {"name": "temperature", "number": 25.5, "quality": "good"}
+  ]
+}
+```
+
+The default enrichment depth is 10. Metadata cache entries are flushed when core
+receives `platform.meta.asset.changed` or `platform.meta.relation.changed`.
+
+Traversal subjects expose the same graph through NATS request/reply:
+
+| Subject | Request | Response |
+| --- | --- | --- |
+| `platform.meta.asset.ancestors` | `{"asset_id":"sensor-001","relation_types":["partOf"],"max_depth":10}` | `{"nodes":[{"id":"pump-A","name":"pump-A","depth":1}]}` |
+| `platform.meta.asset.descendants` | `{"asset_id":"factory-1","relation_types":["partOf"],"max_depth":10}` | `{"nodes":[...]}` |
+| `platform.meta.asset.subtree` | `{"asset_id":"factory-1","relation_types":["partOf"],"max_depth":10}` | Recursive tree node with `children` |
+| `platform.meta.asset.connected` | `{"asset_id":"pump-A","relation_type":"connectedTo"}` | `{"nodes":[...]}` |
+
+If `relation_types` is omitted for tree traversal, core uses `partOf` and
+`locatedIn`. If `relation_type` is omitted for `connected`, core returns all
+one-hop relation types.
+
 ## Monitoring
 
 - **NATS Monitor**: http://localhost:8222

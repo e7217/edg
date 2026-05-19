@@ -133,11 +133,20 @@ func main() {
 
 	// 6. Create handlers and subscribe
 	eventPublisher := core.NewEventPublisher(nc)
+	enricher := core.NewEnricher(store, core.EnricherOptions{
+		MaxDepth: core.DefaultTraversalMaxDepth,
+	})
+	if err := enricher.Start(nc); err != nil {
+		log.Fatalf("Failed to start enricher: %v", err)
+	}
+	defer enricher.Stop()
+
 	dataHandler := core.NewDataHandlerWithConfig(js, store, core.DataHandlerOptions{
 		ValidatedSubject:  cfg.JetStream.ValidatedSubject,
 		DeadLetterSubject: cfg.JetStream.DeadLetterSubject,
 		Events:            eventPublisher,
 		RegistrationMode:  cfg.AssetRegistration.Mode,
+		Enricher:          enricher,
 	})
 	metaHandler := core.NewMetaHandler(store, loader, eventPublisher)
 

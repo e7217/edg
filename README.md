@@ -26,6 +26,7 @@
 
 *   **Automatic Asset Registration**: Devices appear in the metadata store the first time they publish data — no manual provisioning step.
 *   **Metadata Change Events**: Asset and relation mutations are published on `platform.meta.*.changed` with `before` / `after` snapshots for reactive adapters and sidecars. See [Metadata Events](docs/events.md).
+*   **Relationship-Aware Enrichment**: Validated data can carry ancestor tags derived from asset relations for line, area, and factory-level queries.
 *   **Edge-Side Data Validation**: Template-driven schema and quality checks applied before data reaches storage.
 *   **Dead-Letter Visibility**: Validated-publish failures are routed to `platform.data.deadletter` with expvar counters for monitoring.
 *   **Multi-Language Adapters**: Python SDK, Go SDK, or direct NATS publishing — pick the language that matches your protocol library.
