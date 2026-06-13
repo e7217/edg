@@ -30,6 +30,7 @@ type CoreConfig struct {
 	Alarm             AlarmConfig             `yaml:"alarm"`
 	Constraints       ConstraintsConfig       `yaml:"constraints"`
 	HTTP              HTTPConfig              `yaml:"http"`
+	Sink              SinkConfig              `yaml:"sink"`
 }
 
 type NATSConfig struct {
@@ -80,6 +81,19 @@ type HTTPConfig struct {
 	Address            string   `yaml:"address"`
 	TokenEnv           string   `yaml:"token_env"`
 	CORSAllowedOrigins []string `yaml:"cors_allowed_origins"`
+}
+
+// SinkConfig configures the built-in VictoriaMetrics sink. When enabled, core
+// runs a durable JetStream pull consumer that writes validated data to a
+// VictoriaMetrics-compatible endpoint, replacing the external Telegraf bridge.
+type SinkConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	URL            string        `yaml:"url"`
+	ConsumerName   string        `yaml:"consumer_name"`
+	Measurement    string        `yaml:"measurement"`
+	BatchMaxSize   int           `yaml:"batch_max_size"`
+	FlushInterval  time.Duration `yaml:"flush_interval"`
+	RequestTimeout time.Duration `yaml:"request_timeout"`
 }
 
 type JetStreamStreamConfig struct {
@@ -144,6 +158,15 @@ func DefaultCoreConfig() CoreConfig {
 			Enabled:  false,
 			Address:  "127.0.0.1:8080",
 			TokenEnv: "EDG_HTTP_TOKEN",
+		},
+		Sink: SinkConfig{
+			Enabled:        true,
+			URL:            "http://localhost:8428",
+			ConsumerName:   "edg-core-vm-sink",
+			Measurement:    "edg_data",
+			BatchMaxSize:   500,
+			FlushInterval:  time.Second,
+			RequestTimeout: 5 * time.Second,
 		},
 	}
 }
@@ -216,7 +239,29 @@ func (c *CoreConfig) applyDefaults() {
 	if c.HTTP.TokenEnv == "" {
 		c.HTTP.TokenEnv = defaults.HTTP.TokenEnv
 	}
+	c.Sink.applyDefaults(defaults.Sink)
 	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
+}
+
+func (c *SinkConfig) applyDefaults(defaults SinkConfig) {
+	if c.URL == "" {
+		c.URL = defaults.URL
+	}
+	if c.ConsumerName == "" {
+		c.ConsumerName = defaults.ConsumerName
+	}
+	if c.Measurement == "" {
+		c.Measurement = defaults.Measurement
+	}
+	if c.BatchMaxSize == 0 {
+		c.BatchMaxSize = defaults.BatchMaxSize
+	}
+	if c.FlushInterval == 0 {
+		c.FlushInterval = defaults.FlushInterval
+	}
+	if c.RequestTimeout == 0 {
+		c.RequestTimeout = defaults.RequestTimeout
+	}
 }
 
 func (c CoreConfig) validate() error {
@@ -238,6 +283,20 @@ func (c CoreConfig) validate() error {
 	}
 	if c.HTTP.Enabled && c.HTTP.Address == "" {
 		return fmt.Errorf("http.address is required when http.enabled is true")
+	}
+	if c.Sink.Enabled {
+		if c.Sink.URL == "" {
+			return fmt.Errorf("sink.url is required when sink.enabled is true")
+		}
+		if c.Sink.BatchMaxSize <= 0 {
+			return fmt.Errorf("invalid sink.batch_max_size: %d (must be > 0)", c.Sink.BatchMaxSize)
+		}
+		if c.Sink.FlushInterval <= 0 {
+			return fmt.Errorf("invalid sink.flush_interval: %s (must be > 0)", c.Sink.FlushInterval)
+		}
+		if c.Sink.RequestTimeout <= 0 {
+			return fmt.Errorf("invalid sink.request_timeout: %s (must be > 0)", c.Sink.RequestTimeout)
+		}
 	}
 	return nil
 }
@@ -325,6 +384,45 @@ func (c *JetStreamStreamConfig) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("invalid jetstream.stream.max_age: %w", err)
 		}
 		c.MaxAge = duration
+	}
+	return nil
+}
+
+func (c *SinkConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Enabled        *bool  `yaml:"enabled"`
+		URL            string `yaml:"url"`
+		ConsumerName   string `yaml:"consumer_name"`
+		Measurement    string `yaml:"measurement"`
+		BatchMaxSize   int    `yaml:"batch_max_size"`
+		FlushInterval  string `yaml:"flush_interval"`
+		RequestTimeout string `yaml:"request_timeout"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	*c = SinkConfig{
+		URL:          raw.URL,
+		ConsumerName: raw.ConsumerName,
+		Measurement:  raw.Measurement,
+		BatchMaxSize: raw.BatchMaxSize,
+	}
+	// Default Enabled to true when the key is omitted, matching DefaultCoreConfig.
+	c.Enabled = raw.Enabled == nil || *raw.Enabled
+	if raw.FlushInterval != "" {
+		duration, err := time.ParseDuration(raw.FlushInterval)
+		if err != nil {
+			return fmt.Errorf("invalid sink.flush_interval: %w", err)
+		}
+		c.FlushInterval = duration
+	}
+	if raw.RequestTimeout != "" {
+		duration, err := time.ParseDuration(raw.RequestTimeout)
+		if err != nil {
+			return fmt.Errorf("invalid sink.request_timeout: %w", err)
+		}
+		c.RequestTimeout = duration
 	}
 	return nil
 }

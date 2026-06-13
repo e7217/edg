@@ -52,6 +52,12 @@ func main() {
 		log.Fatalf("Failed to load core config: %v", err)
 	}
 
+	// Allow the VM sink endpoint to be overridden without editing the config
+	// file (e.g. to point at a service hostname in container deployments).
+	if sinkURL := os.Getenv("EDG_SINK_URL"); sinkURL != "" {
+		cfg.Sink.URL = sinkURL
+	}
+
 	if *migrateDownFlag > 0 {
 		if err := core.RunMigrationSteps(cfg.Storage.MetadataDB, -*migrateDownFlag); err != nil {
 			log.Fatalf("Failed to rollback metadata DB: %v", err)
@@ -177,6 +183,20 @@ func main() {
 	serviceCtx, stopServices := context.WithCancel(context.Background())
 	defer stopServices()
 
+	// Built-in VictoriaMetrics sink: a durable JetStream pull consumer that
+	// replaces the external Telegraf bridge (see ADR 0005).
+	var sink *core.VMSink
+	if cfg.Sink.Enabled {
+		sink, err = core.NewVMSink(js, cfg.JetStream.ValidatedSubject, cfg.Sink)
+		if err != nil {
+			log.Fatalf("Failed to create VM sink: %v", err)
+		}
+		if err := sink.Start(serviceCtx); err != nil {
+			log.Fatalf("Failed to start VM sink: %v", err)
+		}
+		log.Printf("[Core] VM sink writing %q to %s", cfg.JetStream.ValidatedSubject, cfg.Sink.URL)
+	}
+
 	if cfg.HTTP.Enabled {
 		httpServer := httpapi.NewServer(store, httpapi.Options{
 			Address:            cfg.HTTP.Address,
@@ -215,6 +235,9 @@ func main() {
 
 	log.Println("[Core] Shutting down...")
 	stopServices()
+	if sink != nil {
+		sink.Stop()
+	}
 	nc.Drain()
 	ns.Shutdown()
 }

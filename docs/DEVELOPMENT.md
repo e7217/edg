@@ -33,10 +33,9 @@ Test the complete pipeline locally with a single command:
 This script will:
 1. Build EDG Core
 2. Download and setup VictoriaMetrics (if not installed)
-3. Download and setup Telegraf (if not installed)
-4. Start all services
-5. Publish test sensor data
-6. Verify data flow to VictoriaMetrics
+3. Start all services
+4. Publish test sensor data
+5. Verify data flow to VictoriaMetrics
 
 ### Manual Testing
 
@@ -55,17 +54,15 @@ tar xzf victoria-metrics-linux-amd64-v1.96.0.tar.gz
 ./victoria-metrics-prod -storageDataPath=./victoria-metrics-data
 ```
 
-**3. Start Telegraf:**
-```bash
-# Download (Linux x86_64)
-wget https://dl.influxdata.com/telegraf/releases/telegraf-1.29.0_linux_amd64.tar.gz
-tar xzf telegraf-1.29.0_linux_amd64.tar.gz
+Core's built-in sink writes to VictoriaMetrics directly — no separate metrics
+agent is needed. Point the sink at your VictoriaMetrics with the `EDG_SINK_URL`
+env var (defaults to `http://localhost:8428`):
 
-# Run with project config
-./telegraf-1.29.0/usr/bin/telegraf --config ./deploy/configs/telegraf/telegraf.conf
+```bash
+EDG_SINK_URL=http://localhost:8428 go run ./cmd/core/main.go
 ```
 
-**4. Send test data:**
+**3. Send test data:**
 
 Python:
 ```python
@@ -90,10 +87,13 @@ async def main():
 asyncio.run(main())
 ```
 
-**5. Verify data in VictoriaMetrics:**
+**4. Verify data in VictoriaMetrics:**
 ```bash
-# Query all metrics
-curl 'http://localhost:8428/api/v1/query?query=nats_consumer_number' | jq '.'
+# Query the metric written by the built-in sink
+curl 'http://localhost:8428/api/v1/query?query=edg_data_number' | jq '.'
+
+# Or explore interactively in the built-in UI
+open http://localhost:8428/vmui
 ```
 
 ## Running Unit Tests
@@ -113,10 +113,9 @@ edg/
 ├── deploy/
 │   ├── docker/         # Docker deployment files
 │   │   ├── compose.yml
-│   │   ├── Dockerfile.core
-│   │   └── Dockerfile.telegraf
+│   │   └── Dockerfile.core
 │   └── configs/        # Shared deployment configs
-│       └── telegraf/   # Telegraf configuration
+│       └── core/       # Core YAML configs (dev/staging/prod)
 ├── scripts/
 │   └── install.sh      # Installation script
 ├── templates/          # Asset templates (optional)
@@ -133,6 +132,6 @@ Releases are automated via GitHub Actions:
 2. Push the tag: `git push origin v1.0.0`
 3. GitHub Actions will:
    - Build EDG Core for all platforms
-   - Download Telegraf binaries
+   - Download the VictoriaMetrics binary
    - Package release bundles
    - Create GitHub release with assets

@@ -9,6 +9,7 @@ operator expectations, or compatibility.
 - [ADR 0002: Ontology Enrichment and Traversal](0002-ontology-enrichment.md)
 - [ADR 0003: Relationship-Based Control and Conditional Triggers](0003-relationship-based-control.md)
 - [ADR 0004: Ontology Rule Engine](0004-ontology-rule-engine.md)
+- [ADR 0005: Built-in VictoriaMetrics Sink](0005-embedded-vm-sink.md)
 
 ## Format
 

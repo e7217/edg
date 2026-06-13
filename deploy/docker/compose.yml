@@ -38,6 +38,8 @@ services:
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - ENV=${ENV:-dev}
+      # Built-in VM sink writes validated data straight to VictoriaMetrics.
+      - EDG_SINK_URL=http://edg-victoriametrics:8428
     depends_on:
       - edg-victoriametrics
     networks:
@@ -49,31 +51,11 @@ services:
       retries: 3
       start_period: 10s
 
-  # Telegraf - Metrics collection agent
-  edg-telegraf:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile.telegraf
-    image: edg-telegraf:${VERSION:-latest}
-    container_name: edg-telegraf
-    restart: unless-stopped
-    environment:
-      - NATS_SERVER=edg-core
-      - NATS_PORT=4222
-      - VM_HOST=edg-victoriametrics
-      - VM_PORT=8428
-    depends_on:
-      - edg-core
-      - edg-victoriametrics
-    networks:
-      - service-net
-    healthcheck:
-      test: ["CMD", "telegraf", "--test", "--config", "/etc/telegraf/telegraf.conf"]
-      interval: 60s
-      timeout: 10s
-      retries: 3
-
+  # Grafana - optional dashboards. Opt in with `--profile grafana`.
+  # Day-to-day inspection is available without it via VictoriaMetrics' built-in
+  # vmui at http://localhost:8428/vmui.
   edg-grafana:
+    profiles: ["grafana"]
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.grafana
