@@ -6,50 +6,11 @@ This document contains the license information for third-party software included
 
 | Component | Version | License | Copyright |
 |-----------|---------|---------|-----------|
-| Telegraf | 1.29.0 | MIT | 2015-2025 InfluxData Inc. |
 | VictoriaMetrics | 1.133.0 | Apache 2.0 | 2019-2025 VictoriaMetrics, Inc. |
 | pymodbus | 3.7+ | BSD-3-Clause | 2008-2025 Pymodbus |
 | PyYAML | 6.0+ | MIT | 2017-2024 Ingy döt Net, Kirill Simonov |
 | goburrow/modbus | 0.1.0 | BSD-3-Clause | Quoc-Viet Nguyen |
 | tbrandon/mbserver | (test only) | MIT | Travis Brandon |
-
----
-
-## Telegraf
-
-**License**: MIT License
-**Copyright**: Copyright (c) 2015-2025 InfluxData Inc.
-**Source**: https://github.com/influxdata/telegraf
-
-### MIT License
-
-```
-MIT License
-
-Copyright (c) 2015-2025 InfluxData Inc.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-**Additional Information**:
-- Telegraf may contain dependencies licensed under various open-source licenses
-- For complete dependency license information, see: https://github.com/influxdata/telegraf/blob/master/docs/LICENSE_OF_DEPENDENCIES.md
 
 ---
 

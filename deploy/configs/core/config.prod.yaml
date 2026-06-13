@@ -42,6 +42,17 @@ jetstream:
     retention: limits
     discard: old
 
+# Built-in VictoriaMetrics sink. Override `url` with EDG_SINK_URL when
+# VictoriaMetrics runs on a different host (e.g. a container service name).
+sink:
+  enabled: true
+  url: http://localhost:8428
+  consumer_name: edg-core-vm-sink
+  measurement: edg_data
+  batch_max_size: 500
+  flush_interval: 1s
+  request_timeout: 5s
+
 logging:
   level: warn
   format: json

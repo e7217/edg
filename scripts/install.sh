@@ -10,7 +10,6 @@ sudo mkdir -p "$INSTALL_DIR"/{bin,configs,data}
 
 # Copy binaries
 sudo cp edg-core "$INSTALL_DIR/bin/"
-sudo cp telegraf "$INSTALL_DIR/bin/"
 sudo cp victoria-metrics-prod "$INSTALL_DIR/bin/" 2>/dev/null || sudo cp victoria-metrics-prod.exe "$INSTALL_DIR/bin/" 2>/dev/null || true
 
 # Copy configs
@@ -27,21 +26,6 @@ After=network.target
 [Service]
 ExecStart=$INSTALL_DIR/bin/edg-core
 WorkingDirectory=$INSTALL_DIR
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Telegraf service
-    sudo tee /etc/systemd/system/edg-telegraf.service > /dev/null <<EOF
-[Unit]
-Description=EDG Telegraf Agent
-After=edg-core.service
-
-[Service]
-ExecStart=$INSTALL_DIR/bin/telegraf --config $INSTALL_DIR/configs/telegraf/telegraf.conf
 Restart=always
 RestartSec=5
 
@@ -74,7 +58,9 @@ echo ""
 echo "To start services:"
 echo "  sudo systemctl start edg-victoriametrics"
 echo "  sudo systemctl start edg-core"
-echo "  sudo systemctl start edg-telegraf"
 echo ""
 echo "To enable services at boot:"
-echo "  sudo systemctl enable edg-victoriametrics edg-core edg-telegraf"
+echo "  sudo systemctl enable edg-victoriametrics edg-core"
+echo ""
+echo "EDG Core writes validated data to VictoriaMetrics via its built-in sink."
+echo "Inspect data at http://localhost:8428/vmui (no extra service required)."

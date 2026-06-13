@@ -53,6 +53,71 @@ func TestDefaultCoreConfig_HTTP(t *testing.T) {
 	assert.Equal(t, "EDG_HTTP_TOKEN", cfg.HTTP.TokenEnv)
 }
 
+func TestDefaultCoreConfig_Sink(t *testing.T) {
+	cfg := DefaultCoreConfig()
+
+	assert.True(t, cfg.Sink.Enabled)
+	assert.Equal(t, "http://localhost:8428", cfg.Sink.URL)
+	assert.Equal(t, "edg-core-vm-sink", cfg.Sink.ConsumerName)
+	assert.Equal(t, "edg_data", cfg.Sink.Measurement)
+	assert.Equal(t, 500, cfg.Sink.BatchMaxSize)
+	assert.Equal(t, time.Second, cfg.Sink.FlushInterval)
+	assert.Equal(t, 5*time.Second, cfg.Sink.RequestTimeout)
+}
+
+func TestLoadCoreConfig_SinkFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+sink:
+  url: http://victoria:8428
+  consumer_name: custom-sink
+  measurement: plant_data
+  batch_max_size: 250
+  flush_interval: 2s
+  request_timeout: 10s
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.True(t, cfg.Sink.Enabled) // defaults to true when key omitted
+	assert.Equal(t, "http://victoria:8428", cfg.Sink.URL)
+	assert.Equal(t, "custom-sink", cfg.Sink.ConsumerName)
+	assert.Equal(t, "plant_data", cfg.Sink.Measurement)
+	assert.Equal(t, 250, cfg.Sink.BatchMaxSize)
+	assert.Equal(t, 2*time.Second, cfg.Sink.FlushInterval)
+	assert.Equal(t, 10*time.Second, cfg.Sink.RequestTimeout)
+}
+
+func TestLoadCoreConfig_SinkDisabled(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+sink:
+  enabled: false
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.False(t, cfg.Sink.Enabled)
+	// Disabled sink still receives defaults for its other fields.
+	assert.Equal(t, "edg_data", cfg.Sink.Measurement)
+}
+
+func TestLoadCoreConfig_SinkInvalidFlushInterval(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+sink:
+  flush_interval: nonsense
+`), 0644)
+	require.NoError(t, err)
+
+	_, err = LoadCoreConfig(path)
+	require.Error(t, err)
+}
+
 func TestLoadCoreConfig_JetStreamPolicyFromYAML(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`

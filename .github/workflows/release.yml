@@ -14,25 +14,20 @@ jobs:
         include:
           - goos: linux
             goarch: amd64
-            telegraf_suffix: linux_amd64
             vm_suffix: linux-amd64
           - goos: linux
             goarch: arm64
-            telegraf_suffix: linux_arm64
             vm_suffix: linux-arm64
           - goos: darwin
             goarch: amd64
-            telegraf_suffix: darwin_amd64
             vm_suffix: darwin-amd64
           - goos: windows
             goarch: amd64
-            telegraf_suffix: windows_amd64
             vm_suffix: windows-amd64
             ext: .exe
 
     runs-on: ubuntu-latest
     env:
-      TELEGRAF_VERSION: "1.29.0"
       VM_VERSION: "1.133.0"
       DEPS_TAG: "deps-v1"
 
@@ -62,19 +57,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Download Telegraf
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            gh release download ${{ env.DEPS_TAG }} \
-              --pattern "telegraf-${{ env.TELEGRAF_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" \
-              --repo ${{ github.repository }}
-            unzip -q telegraf-*.zip
-          else
-            gh release download ${{ env.DEPS_TAG }} \
-              --pattern "telegraf-${{ env.TELEGRAF_VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" \
-              --repo ${{ github.repository }}
-            tar -xzf telegraf-*.tar.gz
-          fi
-
           # Download VictoriaMetrics
           if [ "${{ matrix.goos }}" = "windows" ]; then
             gh release download ${{ env.DEPS_TAG }} \
@@ -96,10 +78,8 @@ jobs:
           cp edg-core${{ matrix.ext }} "$DIST_DIR/"
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            cp telegraf-*/telegraf.exe "$DIST_DIR/"
             cp victoria-metrics-prod.exe "$DIST_DIR/" || cp victoria-metrics.exe "$DIST_DIR/victoria-metrics-prod.exe"
           else
-            cp telegraf-*/usr/bin/telegraf "$DIST_DIR/"
             cp victoria-metrics-prod "$DIST_DIR/" || cp victoria-metrics "$DIST_DIR/victoria-metrics-prod"
           fi
 

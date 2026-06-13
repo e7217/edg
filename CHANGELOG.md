@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automatic release infrastructure with release-please
 - Version information display with `--version` flag
 - Cross-platform build support (Linux, macOS, Windows for amd64 and arm64)
-- Telegraf integration for metrics collection
+- Built-in VictoriaMetrics sink: a durable JetStream consumer in core writes
+  validated data to VictoriaMetrics, replacing the external Telegraf bridge
+  (ADR 0005). Override the endpoint with `EDG_SINK_URL`.
 - VictoriaMetrics integration for time-series data storage
 - Docker Compose deployment configuration
 - Asset metadata extensions for external IDs, source tracking, attributes, and update timestamps
@@ -34,10 +36,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The VictoriaMetrics metric name is now `edg_data_number` (was
+  `nats_consumer_number`, which leaked the Telegraf input plugin name into the
+  data schema). Existing series remain queryable until retention expiry.
+
 ### Deprecated
 
 ### Removed
 
+- Telegraf is no longer bundled or required. Its Docker image, systemd unit,
+  config, and release-pipeline steps have been removed.
+
 ### Fixed
+
+- The `JetStream -> storage` hop now honours the durable, ack-after-write
+  boundary described in ADR 0001. The former Telegraf `queue_group` subscription
+  did not replay the JetStream backlog after downtime; the built-in durable
+  consumer does.
 
 ### Security

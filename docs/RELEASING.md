@@ -123,7 +123,6 @@ cd edg-v0.1.0-linux-amd64
 
 Each artifact should contain:
 - `edg-core` (or `edg-core.exe` for Windows)
-- `telegraf` binary
 - `victoria-metrics-prod` binary
 - `configs/` directory
 - `install.sh` script

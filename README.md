@@ -20,7 +20,7 @@
 *   **Explicit Reliability Boundary**: At-least-once delivery starts at the JetStream publish ack — operators know exactly where adapter retry or buffering is still needed. See [ADR 0001](docs/adr/0001-data-plane-reliability.md).
 *   **Semantic Asset Model**: First-class asset relations (`partOf`, `connectedTo`, `locatedIn`) and external identifiers (`irdi`, `eclass`, `aas`, `opcua_node_id`) — a foundation for digital twin work, not just point collection.
 *   **Wire-Contract First**: The integration contract is a small set of NATS subjects, not an SDK. Any language with a NATS client can publish data and subscribe to metadata events — Python and Go SDKs are conveniences for the common cases.
-*   **Time-Series Ready**: Telegraf templates for VictoriaMetrics / InfluxDB included. The validated stream is also available on NATS for any other consumer.
+*   **Time-Series Ready**: A built-in durable sink writes validated data straight to VictoriaMetrics (or any InfluxDB line-protocol endpoint) — no separate metrics agent. The validated stream is also available on NATS for any other consumer.
 
 ## Key Features
 
@@ -43,11 +43,14 @@ sudo ./install.sh
 
 ### 2. Start Services
 ```bash
+sudo systemctl start edg-victoriametrics
 sudo systemctl start edg-core
-sudo systemctl start edg-telegraf
 ```
 
-If you are using docker-compose, you can also start Grafana (optional) for dashboards.
+EDG Core writes validated data to VictoriaMetrics through its built-in sink.
+Inspect it at `http://localhost:8428/vmui` — no extra service required. If you
+are using docker-compose, you can also start Grafana (optional) with
+`docker compose --profile grafana up` for richer dashboards.
 
 ### 3. Send Data
 Pick the SDK that fits your toolchain — both publish to the same NATS subject.
@@ -136,8 +139,9 @@ graph LR
     Sensor[Sensor] -->|Python / Go Adapter| NATS1[NATS: Ingest]
     NATS1 -->|Stream| Core[EDG Core]
     Core -->|Validation| NATS2[NATS: Validated]
-    NATS2 -->|Consumer| Telegraf
-    Telegraf -->|Write| VM[VictoriaMetrics]
+    NATS2 -->|Durable consumer| Sink[Built-in VM Sink]
+    Sink -->|Write| VM[VictoriaMetrics]
+    Core -.->|in one binary| Sink
 ```
 
 </details>
@@ -151,9 +155,9 @@ graph LR
 *   **Standard Protocols**: Modbus TCP — reference adapters in [Python](adapters/python/examples/modbus_tcp) and [Go](adapters/go/sdk/examples/modbus_tcp_sensor). Modbus RTU, MQTT (Planned).
 
 ### Storage & Outputs
-*   **VictoriaMetrics**: High-performance time-series storage (Recommended).
-*   **InfluxDB**: v2 API compatible.
-*   **NATS**: Raw stream access for other microservices.
+*   **VictoriaMetrics**: High-performance time-series storage (Recommended). Written to by core's built-in sink; query and explore cardinality via its built-in vmui at `:8428/vmui`.
+*   **InfluxDB line protocol**: The sink endpoint is configurable (`sink.url` / `EDG_SINK_URL`), so any InfluxDB-compatible target works.
+*   **NATS**: Raw stream access for other microservices — `platform.data.validated` stays published even when the sink is disabled.
 
 ## Roadmap
 
@@ -174,7 +178,16 @@ We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
 
 ## Grafana (Optional)
 
-Grafana is not included in the systemd-based release bundle today. If you deploy via docker-compose, you can run Grafana to visualize data stored in VictoriaMetrics.
+For day-to-day inspection you don't need Grafana — VictoriaMetrics ships a
+built-in UI (vmui) at `http://localhost:8428/vmui` with ad-hoc queries and a
+cardinality explorer, and no extra process.
+
+Grafana is a central, optional layer for richer dashboards and alerting. It is
+not in the systemd release bundle. With docker-compose it sits behind a profile:
+
+```bash
+docker compose --profile grafana up
+```
 
 - URL: http://localhost:3000
 - Default user: `${GRAFANA_ADMIN_USER:-admin}`

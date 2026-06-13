@@ -33,13 +33,6 @@ jobs:
             -t edg-core:latest \
             .
 
-          # Build Telegraf
-          docker build \
-            -f deploy/docker/Dockerfile.telegraf \
-            -t edg-telegraf:${{ steps.version.outputs.VERSION }} \
-            -t edg-telegraf:latest \
-            .
-
           # Build VictoriaMetrics
           docker build \
             -f deploy/docker/Dockerfile.victoriametrics \
@@ -60,11 +53,12 @@ jobs:
         run: |
           cd deploy/docker
 
-          # Stop existing containers
-          docker compose down || true
+          # Stop existing containers (include profiled services)
+          docker compose --profile grafana down || true
 
-          # Start services
-          docker compose up -d
+          # Start services. The dev server includes Grafana via its profile;
+          # the default/production stack stays lean (vmui covers inspection).
+          docker compose --profile grafana up -d
 
           # Wait for services to be ready
           echo "Waiting for services to start..."
@@ -109,24 +103,14 @@ jobs:
           echo "=== VictoriaMetrics Logs ==="
           docker compose logs --tail=20 edg-victoriametrics
 
-          echo "=== Telegraf Logs ==="
-          docker compose logs --tail=20 edg-telegraf
-
           echo "=== Grafana Logs ==="
-          docker compose logs --tail=30 edg-grafana
+          docker compose --profile grafana logs --tail=30 edg-grafana
 
       - name: Cleanup old images
         if: success()
         run: |
           # Keep only last 3 versions of edg-core
           docker images edg-core --format "{{.ID}} {{.Tag}}" | \
-            grep -v latest | \
-            tail -n +4 | \
-            awk '{print $1}' | \
-            xargs -r docker rmi || true
-
-          # Keep only last 3 versions of edg-telegraf
-          docker images edg-telegraf --format "{{.ID}} {{.Tag}}" | \
             grep -v latest | \
             tail -n +4 | \
             awk '{print $1}' | \

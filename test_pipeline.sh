@@ -15,13 +15,13 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Step 1: Build EDG Core
-echo -e "${BLUE}[1/4] Building EDG Core...${NC}"
+echo -e "${BLUE}[1/3] Building EDG Core...${NC}"
 go build -o edg-core ./cmd/core
 echo -e "${GREEN}✓ EDG Core built${NC}"
 echo ""
 
 # Step 2: Check/Install VictoriaMetrics
-echo -e "${BLUE}[2/4] Checking VictoriaMetrics...${NC}"
+echo -e "${BLUE}[2/3] Checking VictoriaMetrics...${NC}"
 if ! command -v victoria-metrics &> /dev/null; then
     echo "VictoriaMetrics not found. Downloading..."
     VM_VERSION="v1.96.0"
@@ -45,33 +45,8 @@ fi
 echo -e "${GREEN}✓ VictoriaMetrics ready${NC}"
 echo ""
 
-# Step 3: Check/Install Telegraf
-echo -e "${BLUE}[3/4] Checking Telegraf...${NC}"
-if ! command -v telegraf &> /dev/null; then
-    echo "Telegraf not found. Downloading..."
-    TELEGRAF_VERSION="1.29.0"
-    ARCH=$(uname -m)
-    if [ "$ARCH" = "x86_64" ]; then
-        TELEGRAF_ARCH="amd64"
-    elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-        TELEGRAF_ARCH="arm64"
-    else
-        echo "Unsupported architecture: $ARCH"
-        exit 1
-    fi
-
-    wget -q "https://dl.influxdata.com/telegraf/releases/telegraf-${TELEGRAF_VERSION}_linux_${TELEGRAF_ARCH}.tar.gz"
-    tar xzf "telegraf-${TELEGRAF_VERSION}_linux_${TELEGRAF_ARCH}.tar.gz"
-    rm "telegraf-${TELEGRAF_VERSION}_linux_${TELEGRAF_ARCH}.tar.gz"
-    TELEGRAF_BIN="./telegraf-${TELEGRAF_VERSION}/usr/bin/telegraf"
-else
-    TELEGRAF_BIN="telegraf"
-fi
-echo -e "${GREEN}✓ Telegraf ready${NC}"
-echo ""
-
-# Step 4: Start services
-echo -e "${BLUE}[4/4] Starting services...${NC}"
+# Step 3: Start services
+echo -e "${BLUE}[3/3] Starting services...${NC}"
 echo ""
 
 # Start VictoriaMetrics
@@ -80,16 +55,10 @@ $VM_BIN -storageDataPath=./victoria-metrics-data -retentionPeriod=1 > /tmp/victo
 VM_PID=$!
 sleep 2
 
-# Start EDG Core
+# Start EDG Core (its built-in sink writes validated data to VictoriaMetrics)
 echo -e "${YELLOW}Starting EDG Core on :4222 (NATS) and :8222 (Monitor)...${NC}"
-./edg-core > /tmp/edg-core.log 2>&1 &
+EDG_SINK_URL="http://localhost:8428" ./edg-core > /tmp/edg-core.log 2>&1 &
 CORE_PID=$!
-sleep 2
-
-# Start Telegraf
-echo -e "${YELLOW}Starting Telegraf...${NC}"
-$TELEGRAF_BIN --config ./configs/telegraf/telegraf.conf > /tmp/telegraf.log 2>&1 &
-TELEGRAF_PID=$!
 sleep 2
 
 echo ""
@@ -99,7 +68,6 @@ echo "================================================"
 echo "  Service Status"
 echo "================================================"
 echo "  EDG Core PID:        $CORE_PID"
-echo "  Telegraf PID:        $TELEGRAF_PID"
 echo "  VictoriaMetrics PID: $VM_PID"
 echo ""
 echo "  NATS:            http://localhost:4222"
@@ -192,13 +160,13 @@ echo ""
 echo -e "${YELLOW}Querying VictoriaMetrics...${NC}"
 sleep 2
 
-QUERY_RESULT=$(curl -s "http://localhost:8428/api/v1/query?query=temperature" | grep -o '"status":"success"' || echo "")
+QUERY_RESULT=$(curl -s "http://localhost:8428/api/v1/query?query=edg_data_number" | grep -o '"status":"success"' || echo "")
 
 if [ -n "$QUERY_RESULT" ]; then
     echo -e "${GREEN}✓ VictoriaMetrics is receiving data${NC}"
     echo ""
     echo "Sample query:"
-    curl -s "http://localhost:8428/api/v1/query?query=temperature" | jq '.'
+    curl -s "http://localhost:8428/api/v1/query?query=edg_data_number" | jq '.'
 else
     echo -e "${YELLOW}⚠ No data found yet (might need more time)${NC}"
 fi
@@ -213,29 +181,26 @@ echo -e "${YELLOW}EDG Core logs:${NC}"
 tail -10 /tmp/edg-core.log
 
 echo ""
-echo -e "${YELLOW}Telegraf logs:${NC}"
-tail -10 /tmp/telegraf.log
-
-echo ""
 echo "================================================"
 echo "  Cleanup"
 echo "================================================"
 echo ""
 echo "To stop all services:"
-echo "  kill $CORE_PID $TELEGRAF_PID $VM_PID"
+echo "  kill $CORE_PID $VM_PID"
 echo ""
 echo "To view live logs:"
 echo "  tail -f /tmp/edg-core.log"
-echo "  tail -f /tmp/telegraf.log"
 echo "  tail -f /tmp/victoria-metrics.log"
 echo ""
+echo "To explore data in VictoriaMetrics (built-in UI):"
+echo "  open http://localhost:8428/vmui"
+echo ""
 echo "To query data from VictoriaMetrics:"
-echo "  curl 'http://localhost:8428/api/v1/query?query=temperature'"
-echo "  curl 'http://localhost:8428/api/v1/query?query=humidity'"
+echo "  curl 'http://localhost:8428/api/v1/query?query=edg_data_number'"
 echo ""
 
 # Save PIDs for easy cleanup
-echo "$CORE_PID $TELEGRAF_PID $VM_PID" > /tmp/edg-pids.txt
+echo "$CORE_PID $VM_PID" > /tmp/edg-pids.txt
 
 echo "PIDs saved to /tmp/edg-pids.txt"
 echo ""

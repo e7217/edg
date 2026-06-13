@@ -2,14 +2,15 @@
 
 ## Status
 
-Accepted
+Accepted (amended by [ADR 0005](0005-embedded-vm-sink.md): the storage consumer
+is now a built-in durable sink in core, not Telegraf)
 
 ## Context
 
 EDG advertises reliable edge ingestion, but the current data plane has multiple
 hops with different delivery semantics. The adapter-to-core hop uses plain NATS
-pub/sub. The core-to-storage hop uses NATS JetStream. Telegraf then consumes the
-validated stream and writes to VictoriaMetrics.
+pub/sub. The core-to-storage hop uses NATS JetStream. A durable consumer then
+reads the validated stream and writes to VictoriaMetrics.
 
 The reliability claim must be explicit enough for operators and adapter authors
 to know where EDG provides persistence and where callers still need retry or
@@ -47,7 +48,7 @@ The hop model is:
 |---|---|---|
 | Adapter to core | At-most-once NATS pub/sub | Adapters retry or buffer when stronger guarantees are needed. |
 | Core to JetStream | Publish ack required | Core records publish failures and attempts dead-letter publication. |
-| JetStream to Telegraf | Durable consumer | Telegraf acks after successful downstream write. |
+| JetStream to storage | Durable pull consumer | The built-in VM sink (ADR 0005) acks only after a successful VictoriaMetrics write, and replays the backlog after downtime. |
 
 The core exposes expvar counters:
 

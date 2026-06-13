@@ -31,24 +31,26 @@ This guide provides detailed instructions for installing, configuring, and monit
 
 ```bash
 # Start services
+sudo systemctl start edg-victoriametrics
 sudo systemctl start edg-core
-sudo systemctl start edg-telegraf
 
 # Enable auto-start on boot
-sudo systemctl enable edg-core
-sudo systemctl enable edg-telegraf
+sudo systemctl enable edg-victoriametrics edg-core
 ```
+
+EDG Core writes validated data to VictoriaMetrics through its built-in sink, so
+there is no separate metrics agent to run.
 
 ### Manual Start (No Systemd)
 
 If you are not using systemd, you can start components manually:
 
 ```bash
-# Start EDG Core
-/opt/edg/bin/edg-core &
+# Start VictoriaMetrics
+/opt/edg/bin/victoria-metrics-prod -storageDataPath=/opt/edg/data/victoria-metrics &
 
-# Start Telegraf
-/opt/edg/bin/telegraf --config /opt/edg/configs/telegraf/telegraf.conf &
+# Start EDG Core (its built-in sink writes to VictoriaMetrics)
+/opt/edg/bin/edg-core &
 ```
 
 ### Custom Installation Directory
@@ -100,13 +102,33 @@ the core process:
 See [ADR 0001](adr/0001-data-plane-reliability.md) for the reliability model and
 failure-mode tradeoffs.
 
-### Telegraf
-Configuration file: `/opt/edg/configs/telegraf/telegraf.conf`
+### VictoriaMetrics Sink
 
-**Key Settings:**
-- Input: NATS (`platform.data.validated`)
-- Output: VictoriaMetrics (`http://localhost:8428`)
-- Parser: `json_v2` (handles nested arrays)
+Core's built-in sink reads `platform.data.validated` with a durable JetStream
+consumer and writes to VictoriaMetrics using the InfluxDB line protocol. It is
+configured under the `sink:` block:
+
+```yaml
+sink:
+  enabled: true              # set false to disable and use an external consumer
+  url: http://localhost:8428 # override per host with the EDG_SINK_URL env var
+  consumer_name: edg-core-vm-sink
+  measurement: edg_data
+  batch_max_size: 500
+  flush_interval: 1s
+  request_timeout: 5s
+```
+
+Each numeric value becomes one metric named `edg_data_number`, tagged with
+`asset_id`, `name`, `unit`, `quality`, and any enrichment metadata. Adapter
+timestamps (epoch milliseconds) are preserved.
+
+Sink health is exposed via expvar on the core process:
+
+- `edg_core_sink_lines_written`
+- `edg_core_sink_batches_written`
+- `edg_core_sink_write_failures`
+- `edg_core_sink_decode_failures`
 
 **Data Format:**
 Incoming JSON from adapters:
@@ -361,8 +383,8 @@ curl -H "Authorization: Bearer $EDG_HTTP_TOKEN" \
 ## Monitoring
 
 - **NATS Monitor**: http://localhost:8222
-- **VictoriaMetrics UI**: http://localhost:8428
-- **Grafana** (optional, docker-compose): http://localhost:3000
+- **VictoriaMetrics UI (vmui)**: http://localhost:8428/vmui — query data and
+  explore label cardinality without any extra service.
+- **Grafana** (optional, `docker compose --profile grafana up`): http://localhost:3000
 - **Logs**:
   - EDG Core: `journalctl -u edg-core -f`
-  - Telegraf: `journalctl -u edg-telegraf -f`

@@ -44,9 +44,10 @@ when relationships exist.
 Traversal stays inside the existing NATS metadata plane. An HTTP facade can be
 added later without changing Store traversal semantics.
 
-Telegraf and VictoriaMetrics deployments must watch tag cardinality. The v1
-enrichment rule uses stable template names as tag keys to avoid creating tag
-keys from asset IDs or display names.
+VictoriaMetrics deployments must watch tag cardinality (the built-in sink turns
+enrichment metadata into VM labels — see [ADR 0005](0005-embedded-vm-sink.md)).
+The v1 enrichment rule uses stable template names as tag keys to avoid creating
+tag keys from asset IDs or display names.
 
 ## Validation
 

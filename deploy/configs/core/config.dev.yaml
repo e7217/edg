@@ -49,6 +49,18 @@ jetstream:
     retention: limits
     discard: old
 
+# Built-in VictoriaMetrics sink (replaces the external Telegraf bridge).
+# A durable JetStream consumer writes validated data to VictoriaMetrics.
+# Override `url` per environment with the EDG_SINK_URL env var if needed.
+sink:
+  enabled: true
+  url: http://localhost:8428
+  consumer_name: edg-core-vm-sink
+  measurement: edg_data
+  batch_max_size: 500
+  flush_interval: 1s
+  request_timeout: 5s
+
 logging:
   level: debug
   format: text
