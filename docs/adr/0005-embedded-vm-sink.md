@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (amends [ADR 0001](0001-data-plane-reliability.md))
+Accepted (amends [ADR 0001](0001-data-plane-reliability.md); the public-contract
+and external-fan-out follow-up is specified in
+[ADR 0006](0006-validated-data-contract.md))
 
 ## Context
 

@@ -4,6 +4,9 @@ EDG Core publishes best-effort NATS events after metadata mutations are stored.
 Subscribers should use these events as change notifications and reconcile current
 state with metadata request subjects when they start.
 
+For the asset **data** stream (`platform.data.validated`) rather than metadata
+events, see the [validated data contract](data-contract.md).
+
 ## Subjects
 
 | Subject | Entity | When |

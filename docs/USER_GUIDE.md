@@ -123,6 +123,11 @@ Each numeric value becomes one metric named `edg_data_number`, tagged with
 `asset_id`, `name`, `unit`, `quality`, and any enrichment metadata. Adapter
 timestamps (epoch milliseconds) are preserved.
 
+To send validated data elsewhere (Kafka, S3, cloud TSDBs) instead of or
+alongside the built-in sink, attach an external consumer to
+`platform.data.validated`. See the [validated data contract](data-contract.md)
+for the payload schema, durability tiers, and a fan-out recipe.
+
 Sink health is exposed via expvar on the core process:
 
 - `edg_core_sink_lines_written`
