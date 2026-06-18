@@ -49,8 +49,10 @@ type StorageConfig struct {
 }
 
 type TemplateConfig struct {
-	Dir        string `yaml:"dir"`
-	AutoReload bool   `yaml:"auto_reload"`
+	// Dir is the seed/import directory for templates. Templates are stored in
+	// SQLite; this directory is imported into an empty DB on first boot and is
+	// the default target for --import-templates / --export-templates.
+	Dir string `yaml:"dir"`
 }
 
 type LoggingConfig struct {
@@ -120,8 +122,7 @@ func DefaultCoreConfig() CoreConfig {
 			AutoMigrate:   true,
 		},
 		Templates: TemplateConfig{
-			Dir:        "./templates",
-			AutoReload: true,
+			Dir: "./templates",
 		},
 		Logging: LoggingConfig{
 			Level:  "info",

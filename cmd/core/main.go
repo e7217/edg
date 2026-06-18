@@ -30,6 +30,8 @@ func main() {
 	versionFlag := flag.Bool("version", false, "Print version information and exit")
 	migrateDownFlag := flag.Int("migrate-down", 0, "Rollback metadata DB by N migration steps and exit")
 	checkConstraintsFlag := flag.Bool("check-constraints", false, "Check catalog template constraints and exit")
+	importTemplatesFlag := flag.String("import-templates", "", "Import templates from a directory into the metadata DB and exit")
+	exportTemplatesFlag := flag.String("export-templates", "", "Export templates from the metadata DB to a directory and exit")
 	configFlag := flag.String("config", os.Getenv("EDG_CORE_CONFIG"), "Path to core configuration file")
 	flag.Parse()
 
@@ -63,6 +65,20 @@ func main() {
 			log.Fatalf("Failed to rollback metadata DB: %v", err)
 		}
 		log.Printf("[Core] Rolled back metadata DB by %d migration step(s)", *migrateDownFlag)
+		os.Exit(0)
+	}
+
+	if *importTemplatesFlag != "" {
+		if err := runImportTemplates(cfg, *importTemplatesFlag); err != nil {
+			log.Fatalf("Failed to import templates: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	if *exportTemplatesFlag != "" {
+		if err := runExportTemplates(cfg, *exportTemplatesFlag); err != nil {
+			log.Fatalf("Failed to export templates: %v", err)
+		}
 		os.Exit(0)
 	}
 
@@ -148,10 +164,15 @@ func main() {
 	}
 	defer store.Close()
 
-	// 5. Initialize template loader
-	loader := core.NewTemplateLoader()
-	if err := loader.LoadFromDir(cfg.Templates.Dir); err != nil {
-		log.Printf("[Core] Warning: Failed to load templates: %v", err)
+	// 5. Initialize template loader (DB-authoritative; seed from dir on empty DB)
+	loader, err := core.NewTemplateLoaderWithStore(store)
+	if err != nil {
+		log.Fatalf("Failed to load templates from store: %v", err)
+	}
+	if loader.Count() == 0 {
+		if err := loader.LoadFromDir(cfg.Templates.Dir); err != nil {
+			log.Printf("[Core] Warning: Failed to seed templates from %s: %v", cfg.Templates.Dir, err)
+		}
 	}
 	log.Printf("[Core] Loaded %d templates", loader.Count())
 
@@ -250,12 +271,53 @@ func checkConstraints(cfg core.CoreConfig) (core.ConstraintsReport, error) {
 	}
 	defer store.Close()
 
-	loader := core.NewTemplateLoader()
-	if err := loader.LoadFromDir(cfg.Templates.Dir); err != nil {
+	loader, err := core.NewTemplateLoaderWithStore(store)
+	if err != nil {
 		return core.ConstraintsReport{}, err
+	}
+	if loader.Count() == 0 {
+		if err := loader.LoadFromDir(cfg.Templates.Dir); err != nil {
+			return core.ConstraintsReport{}, err
+		}
 	}
 
 	return core.NewConstraintsEvaluator(loader).CheckAll(store)
+}
+
+func runImportTemplates(cfg core.CoreConfig, dir string) error {
+	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	loader, err := core.NewTemplateLoaderWithStore(store)
+	if err != nil {
+		return err
+	}
+	if err := loader.LoadFromDir(dir); err != nil {
+		return err
+	}
+	log.Printf("[Core] Imported templates from %s (%d total)", dir, loader.Count())
+	return nil
+}
+
+func runExportTemplates(cfg core.CoreConfig, dir string) error {
+	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	loader, err := core.NewTemplateLoaderWithStore(store)
+	if err != nil {
+		return err
+	}
+	if err := loader.ExportToDir(dir); err != nil {
+		return err
+	}
+	log.Printf("[Core] Exported %d templates to %s", loader.Count(), dir)
+	return nil
 }
 
 func discoverConfigPath() string {

@@ -14,7 +14,6 @@ storage:
 
 templates:
   dir: ./templates
-  auto_reload: true
 
 # Behavior for data whose asset_id has no declared master-data record.
 # pass_through: publish un-enriched to validated (default).
