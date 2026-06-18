@@ -3,9 +3,7 @@ package core
 import (
 	"encoding/json"
 	"log"
-	"time"
 
-	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 )
 
@@ -26,13 +24,13 @@ const (
 	SubjectRelationDelete = "platform.meta.relation.delete"
 )
 
-// MetaHandler handles metadata NATS messages
+// MetaHandler handles metadata NATS messages by delegating mutations to the
+// shared MetadataService. Read/traversal handlers still use store/loader directly.
 type MetaHandler struct {
-	store                 *Store
-	loader                *TemplateLoader
-	events                *EventPublisher
-	constraints           *ConstraintsEvaluator
-	constraintEnforcement string
+	store       *Store
+	loader      *TemplateLoader
+	constraints *ConstraintsEvaluator
+	service     *MetadataService
 }
 
 type MetaHandlerOptions struct {
@@ -58,11 +56,10 @@ func NewMetaHandlerWithOptions(store *Store, loader *TemplateLoader, opts MetaHa
 		enforcement = ConstraintsEnforcementWarn
 	}
 	return &MetaHandler{
-		store:                 store,
-		loader:                loader,
-		events:                opts.Events,
-		constraints:           NewConstraintsEvaluator(loader),
-		constraintEnforcement: enforcement,
+		store:       store,
+		loader:      loader,
+		constraints: NewConstraintsEvaluator(loader),
+		service:     NewMetadataService(store, loader, opts.Events, enforcement),
 	}
 }
 
@@ -163,46 +160,11 @@ func (h *MetaHandler) handleAssetCreate(msg *nats.Msg) {
 		return
 	}
 
-	if req.Name == "" {
-		h.reply(msg, Response{Success: false, Error: "name is required"})
-		return
-	}
-
-	// check for duplicate
-	existing, _ := h.store.GetAssetByName(req.Name)
-	if existing != nil {
-		h.reply(msg, Response{Success: false, Error: "asset name already exists"})
-		return
-	}
-
-	// check if template exists (optional)
-	if req.TemplateName != "" && !h.loader.Exists(req.TemplateName) {
-		h.reply(msg, Response{Success: false, Error: "template not found"})
-		return
-	}
-
-	asset := &Asset{
-		ID:           uuid.New().String(),
-		Name:         req.Name,
-		TemplateName: req.TemplateName,
-		Labels:       req.Labels,
-		ExternalIDs:  req.ExternalIDs,
-		Source:       req.Source,
-		Attributes:   req.Attributes,
-		CreatedAt:    time.Now(),
-	}
-
-	if err := h.store.CreateAsset(asset); err != nil {
+	asset, err := h.service.CreateAsset(req)
+	if err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
-
-	h.events.PublishAssetChanged(MetaChangeEvent{
-		EventType: EventCreated,
-		EntityID:  asset.ID,
-		Source:    asset.Source,
-		After:     asset,
-	})
 
 	log.Printf("[Meta] Asset created: %s (%s)", asset.Name, asset.ID)
 	h.reply(msg, Response{Success: true, Data: asset})
@@ -274,58 +236,11 @@ func (h *MetaHandler) handleAssetUpdate(msg *nats.Msg) {
 		return
 	}
 
-	if req.ID == "" {
-		h.reply(msg, Response{Success: false, Error: "id is required"})
-		return
-	}
-	if req.Name == "" {
-		h.reply(msg, Response{Success: false, Error: "name is required"})
-		return
-	}
-	if req.TemplateName != "" && !h.loader.Exists(req.TemplateName) {
-		h.reply(msg, Response{Success: false, Error: "template not found"})
-		return
-	}
-
-	existing, err := h.store.GetAsset(req.ID)
+	updated, err := h.service.UpdateAsset(req)
 	if err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
-	if existing == nil {
-		h.reply(msg, Response{Success: false, Error: "asset not found"})
-		return
-	}
-
-	asset := &Asset{
-		ID:           req.ID,
-		Name:         req.Name,
-		TemplateName: req.TemplateName,
-		Labels:       req.Labels,
-		ExternalIDs:  req.ExternalIDs,
-		Source:       req.Source,
-		Attributes:   req.Attributes,
-		CreatedAt:    existing.CreatedAt,
-	}
-
-	if err := h.store.UpdateAsset(asset); err != nil {
-		h.reply(msg, Response{Success: false, Error: err.Error()})
-		return
-	}
-
-	updated, err := h.store.GetAsset(req.ID)
-	if err != nil {
-		h.reply(msg, Response{Success: false, Error: err.Error()})
-		return
-	}
-
-	h.events.PublishAssetChanged(MetaChangeEvent{
-		EventType: EventUpdated,
-		EntityID:  updated.ID,
-		Source:    updated.Source,
-		Before:    existing,
-		After:     updated,
-	})
 
 	log.Printf("[Meta] Asset updated: %s (%s)", updated.Name, updated.ID)
 	h.reply(msg, Response{Success: true, Data: updated})
@@ -344,28 +259,10 @@ func (h *MetaHandler) handleAssetDelete(msg *nats.Msg) {
 		return
 	}
 
-	if req.ID == "" {
-		h.reply(msg, Response{Success: false, Error: "id is required"})
-		return
-	}
-
-	before, err := h.store.GetAsset(req.ID)
-	if err != nil {
+	if err := h.service.DeleteAsset(req); err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
-
-	if err := h.store.DeleteAsset(req.ID); err != nil {
-		h.reply(msg, Response{Success: false, Error: err.Error()})
-		return
-	}
-
-	h.events.PublishAssetChanged(MetaChangeEvent{
-		EventType: EventDeleted,
-		EntityID:  req.ID,
-		Source:    req.Source,
-		Before:    before,
-	})
 
 	log.Printf("[Meta] Asset deleted: %s", req.ID)
 	h.reply(msg, Response{Success: true})
@@ -468,47 +365,6 @@ func (h *MetaHandler) handleConstraintsCheck(msg *nats.Msg) {
 	h.reply(msg, Response{Success: true, Data: report})
 }
 
-func (h *MetaHandler) checkRelationConstraints(relation *AssetRelation) ([]ConstraintViolation, error) {
-	if h == nil || h.constraintEnforcement == ConstraintsEnforcementDisabled || h.constraints == nil || relation == nil {
-		return nil, nil
-	}
-
-	assetIDs := []string{relation.SourceAssetID, relation.TargetAssetID}
-	seen := map[string]bool{}
-	var violations []ConstraintViolation
-	for _, assetID := range assetIDs {
-		if seen[assetID] {
-			continue
-		}
-		seen[assetID] = true
-		asset, err := h.store.GetAsset(assetID)
-		if err != nil {
-			return nil, err
-		}
-		if asset == nil {
-			continue
-		}
-		assetViolations, err := h.constraints.Check(asset, h.store)
-		if err != nil {
-			return nil, err
-		}
-		violations = append(violations, assetViolations...)
-	}
-	return violations, nil
-}
-
-func (h *MetaHandler) allowConstraintViolations(violations []ConstraintViolation) bool {
-	if len(violations) == 0 || h.constraintEnforcement == ConstraintsEnforcementDisabled {
-		return true
-	}
-	for _, violation := range violations {
-		violation.EnforcementMode = h.constraintEnforcement
-		h.events.PublishConstraintViolation(violation)
-		log.Printf("[Meta] Constraint violation: %s", violation.Message)
-	}
-	return h.constraintEnforcement != ConstraintsEnforcementEnforce
-}
-
 // ==================== AssetRelation Handlers ====================
 
 // CreateRelationRequest is a request to create a relation
@@ -527,57 +383,11 @@ func (h *MetaHandler) handleRelationCreate(msg *nats.Msg) {
 		return
 	}
 
-	// Validate required fields
-	if req.SourceAssetID == "" {
-		h.reply(msg, Response{Success: false, Error: "source_asset_id is required"})
-		return
-	}
-	if req.TargetAssetID == "" {
-		h.reply(msg, Response{Success: false, Error: "target_asset_id is required"})
-		return
-	}
-	if req.RelationType == "" {
-		h.reply(msg, Response{Success: false, Error: "relation_type is required"})
-		return
-	}
-
-	// Validate relation type
-	if !IsValidRelationType(req.RelationType) {
-		h.reply(msg, Response{Success: false, Error: "invalid relation_type"})
-		return
-	}
-
-	// Create relation
-	relation := &AssetRelation{
-		ID:            uuid.New().String(),
-		SourceAssetID: req.SourceAssetID,
-		TargetAssetID: req.TargetAssetID,
-		RelationType:  req.RelationType,
-		CreatedAt:     time.Now(),
-		Metadata:      req.Metadata,
-	}
-
-	if err := h.store.CreateRelation(relation); err != nil {
+	relation, err := h.service.CreateRelation(req)
+	if err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
-
-	if violations, err := h.checkRelationConstraints(relation); err != nil {
-		_ = h.store.DeleteRelation(relation.ID)
-		h.reply(msg, Response{Success: false, Error: err.Error()})
-		return
-	} else if !h.allowConstraintViolations(violations) {
-		_ = h.store.DeleteRelation(relation.ID)
-		h.reply(msg, Response{Success: false, Error: constraintsViolationError(violations)})
-		return
-	}
-
-	h.events.PublishRelationChanged(MetaChangeEvent{
-		EventType: EventCreated,
-		EntityID:  relation.ID,
-		Source:    req.Source,
-		After:     relation,
-	})
 
 	log.Printf("[Meta] Relation created: %s (%s -> %s, type: %s)",
 		relation.ID, relation.SourceAssetID, relation.TargetAssetID, relation.RelationType)
@@ -697,28 +507,10 @@ func (h *MetaHandler) handleRelationDelete(msg *nats.Msg) {
 		return
 	}
 
-	if req.ID == "" {
-		h.reply(msg, Response{Success: false, Error: "id is required"})
-		return
-	}
-
-	before, err := h.store.GetRelation(req.ID)
-	if err != nil {
+	if err := h.service.DeleteRelation(req); err != nil {
 		h.reply(msg, Response{Success: false, Error: err.Error()})
 		return
 	}
-
-	if err := h.store.DeleteRelation(req.ID); err != nil {
-		h.reply(msg, Response{Success: false, Error: err.Error()})
-		return
-	}
-
-	h.events.PublishRelationChanged(MetaChangeEvent{
-		EventType: EventDeleted,
-		EntityID:  req.ID,
-		Source:    req.Source,
-		Before:    before,
-	})
 
 	log.Printf("[Meta] Relation deleted: %s", req.ID)
 	h.reply(msg, Response{Success: true})
