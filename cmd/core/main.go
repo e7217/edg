@@ -176,6 +176,7 @@ func main() {
 		Events:                eventPublisher,
 		ConstraintEnforcement: cfg.Constraints.Enforcement,
 	})
+	metaService := core.NewMetadataService(store, loader, eventPublisher, cfg.Constraints.Enforcement)
 	alarmHandler := core.NewAlarmHandler(store, eventPublisher, core.AlarmHandlerOptions{
 		Window:            time.Duration(cfg.Alarm.WindowSeconds) * time.Second,
 		MaxTraversalDepth: cfg.Alarm.MaxTraversalDepth,
@@ -198,7 +199,7 @@ func main() {
 	}
 
 	if cfg.HTTP.Enabled {
-		httpServer := httpapi.NewServer(store, httpapi.Options{
+		httpServer := httpapi.NewServer(store, metaService, httpapi.Options{
 			Address:            cfg.HTTP.Address,
 			TokenEnv:           cfg.HTTP.TokenEnv,
 			CORSAllowedOrigins: cfg.HTTP.CORSAllowedOrigins,

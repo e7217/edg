@@ -20,7 +20,7 @@ type testResponse struct {
 
 func TestServerHealthAndVersion(t *testing.T) {
 	store := newHTTPTestStore(t)
-	server := httptest.NewServer(NewServer(store, Options{
+	server := httptest.NewServer(newHTTPTestServer(store, Options{
 		Version:   "test",
 		BuildTime: "now",
 		GitCommit: "abc123",
@@ -47,7 +47,7 @@ func TestServerHealthAndVersion(t *testing.T) {
 
 func TestServerAssetsRelationsAndTraversal(t *testing.T) {
 	store := newHTTPTestStore(t)
-	server := httptest.NewServer(NewServer(store, Options{}).Handler())
+	server := httptest.NewServer(newHTTPTestServer(store, Options{}).Handler())
 	t.Cleanup(server.Close)
 
 	status, resp := getJSON(t, server.URL+"/api/v1/assets?limit=2&offset=0", "")
@@ -86,7 +86,7 @@ func TestServerAssetsRelationsAndTraversal(t *testing.T) {
 
 func TestServerNotFoundAndBadQuery(t *testing.T) {
 	store := newHTTPTestStore(t)
-	server := httptest.NewServer(NewServer(store, Options{}).Handler())
+	server := httptest.NewServer(newHTTPTestServer(store, Options{}).Handler())
 	t.Cleanup(server.Close)
 
 	status, resp := getJSON(t, server.URL+"/api/v1/assets/missing", "")
@@ -107,7 +107,7 @@ func TestServerNotFoundAndBadQuery(t *testing.T) {
 
 func TestServerBearerAuth(t *testing.T) {
 	store := newHTTPTestStore(t)
-	server := httptest.NewServer(NewServer(store, Options{Token: "secret"}).Handler())
+	server := httptest.NewServer(newHTTPTestServer(store, Options{Token: "secret"}).Handler())
 	t.Cleanup(server.Close)
 
 	status, resp := getJSON(t, server.URL+"/api/v1/health", "")

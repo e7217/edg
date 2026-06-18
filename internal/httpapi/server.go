@@ -30,11 +30,12 @@ type Options struct {
 
 type Server struct {
 	store   *core.Store
+	service *core.MetadataService
 	options Options
 	handler http.Handler
 }
 
-func NewServer(store *core.Store, opts Options) *Server {
+func NewServer(store *core.Store, service *core.MetadataService, opts Options) *Server {
 	if opts.Address == "" {
 		opts.Address = defaultAddress
 	}
@@ -46,6 +47,7 @@ func NewServer(store *core.Store, opts Options) *Server {
 	}
 	server := &Server{
 		store:   store,
+		service: service,
 		options: opts,
 	}
 	server.handler = server.buildHandler()
@@ -96,6 +98,14 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/v1/assets/{id}/subtree", s.handleSubtree)
 	mux.HandleFunc("GET /api/v1/assets/{id}/connected", s.handleConnected)
 	mux.HandleFunc("GET /api/v1/relations", s.handleRelations)
+
+	// Write endpoints (Phase 3). All mutations go through MetadataService so
+	// validation, constraint enforcement, and change events match the NATS path.
+	mux.HandleFunc("POST /api/v1/assets", s.handleAssetCreate)
+	mux.HandleFunc("PUT /api/v1/assets/{id}", s.handleAssetUpdate)
+	mux.HandleFunc("DELETE /api/v1/assets/{id}", s.handleAssetDelete)
+	mux.HandleFunc("POST /api/v1/relations", s.handleRelationCreate)
+	mux.HandleFunc("DELETE /api/v1/relations/{id}", s.handleRelationDelete)
 	return s.cors(s.auth(mux))
 }
 
@@ -254,9 +264,24 @@ func (s *Server) requireAssetExists(w http.ResponseWriter, assetID string) bool 
 	return true
 }
 
+func isWriteMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.options.Token == "" {
+			// Reads stay open when no token is configured, but writes are never
+			// anonymous: they require a non-empty bearer token.
+			if isWriteMethod(r.Method) {
+				writeError(w, http.StatusUnauthorized, "write access requires a configured bearer token")
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -288,7 +313,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		}
 		if r.Method == http.MethodOptions {
