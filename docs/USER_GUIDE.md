@@ -407,6 +407,25 @@ curl -H "Authorization: Bearer $EDG_HTTP_TOKEN" \
   "http://127.0.0.1:8080/api/v1/assets/factory-1/descendants?relation_types=partOf&max_depth=10"
 ```
 
+## Operator UI
+
+When `http.webui_enabled` is true, EDG Core serves a small built-in web UI at the
+HTTP root (`http://<address>/`) — no separate service or build step. It lists
+assets, relations, templates, and constraint violations, and provides simple
+create/delete forms.
+
+```yaml
+http:
+  enabled: true
+  webui_enabled: true
+```
+
+The UI is embedded in the binary (`go:embed`). Reads load anonymously; **writes
+require a bearer token** — paste it into the token field at the top of the page
+(stored in the browser's local storage). The UI refreshes on demand via a button;
+live push updates are a planned enhancement. Keep the HTTP address bound to
+localhost unless a token is configured.
+
 ## Monitoring
 
 - **NATS Monitor**: http://localhost:8222

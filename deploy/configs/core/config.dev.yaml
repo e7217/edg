@@ -31,6 +31,7 @@ http:
   enabled: true
   address: 127.0.0.1:8080
   token_env: EDG_HTTP_TOKEN
+  webui_enabled: true
   cors_allowed_origins:
     - http://localhost:3000
 

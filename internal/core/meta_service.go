@@ -31,6 +31,11 @@ func NewMetadataService(store *Store, loader *TemplateLoader, events *EventPubli
 	}
 }
 
+// CheckConstraints evaluates all template constraints across the catalog.
+func (s *MetadataService) CheckConstraints() (ConstraintsReport, error) {
+	return s.constraints.CheckAll(s.store)
+}
+
 func (s *MetadataService) CreateAsset(req CreateAssetRequest) (*Asset, error) {
 	if req.Name == "" {
 		return nil, newServiceError(ErrValidation, "name is required")
