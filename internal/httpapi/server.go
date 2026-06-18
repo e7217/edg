@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/e7217/edg/internal/core"
+	"github.com/e7217/edg/internal/webui"
 )
 
 const (
@@ -23,6 +24,7 @@ type Options struct {
 	Token              string
 	TokenEnv           string
 	CORSAllowedOrigins []string
+	WebUIEnabled       bool
 	Version            string
 	BuildTime          string
 	GitCommit          string
@@ -98,6 +100,9 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/v1/assets/{id}/subtree", s.handleSubtree)
 	mux.HandleFunc("GET /api/v1/assets/{id}/connected", s.handleConnected)
 	mux.HandleFunc("GET /api/v1/relations", s.handleRelations)
+	mux.HandleFunc("GET /api/v1/templates", s.handleTemplates)
+	mux.HandleFunc("GET /api/v1/templates/{name}", s.handleTemplate)
+	mux.HandleFunc("GET /api/v1/constraints", s.handleConstraints)
 
 	// Write endpoints (Phase 3). All mutations go through MetadataService so
 	// validation, constraint enforcement, and change events match the NATS path.
@@ -106,7 +111,44 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/assets/{id}", s.handleAssetDelete)
 	mux.HandleFunc("POST /api/v1/relations", s.handleRelationCreate)
 	mux.HandleFunc("DELETE /api/v1/relations/{id}", s.handleRelationDelete)
+
+	// Embedded operator UI (Phase 5). Served at the root; the more specific
+	// /api/v1/... patterns take precedence in the Go 1.22 mux.
+	if s.options.WebUIEnabled {
+		mux.Handle("GET /", http.FileServerFS(webui.FS()))
+	}
 	return s.cors(s.auth(mux))
+}
+
+func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
+	templates, err := s.store.ListTemplates()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeResponse(w, http.StatusOK, templates)
+}
+
+func (s *Server) handleTemplate(w http.ResponseWriter, r *http.Request) {
+	template, err := s.store.GetTemplate(r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if template == nil {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
+	writeResponse(w, http.StatusOK, template)
+}
+
+func (s *Server) handleConstraints(w http.ResponseWriter, r *http.Request) {
+	report, err := s.service.CheckConstraints()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeResponse(w, http.StatusOK, report)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

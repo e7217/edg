@@ -80,6 +80,7 @@ type HTTPConfig struct {
 	Address            string   `yaml:"address"`
 	TokenEnv           string   `yaml:"token_env"`
 	CORSAllowedOrigins []string `yaml:"cors_allowed_origins"`
+	WebUIEnabled       bool     `yaml:"webui_enabled"`
 }
 
 // SinkConfig configures the built-in VictoriaMetrics sink. When enabled, core

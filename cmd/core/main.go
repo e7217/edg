@@ -224,6 +224,7 @@ func main() {
 			Address:            cfg.HTTP.Address,
 			TokenEnv:           cfg.HTTP.TokenEnv,
 			CORSAllowedOrigins: cfg.HTTP.CORSAllowedOrigins,
+			WebUIEnabled:       cfg.HTTP.WebUIEnabled,
 			Version:            Version,
 			BuildTime:          BuildTime,
 			GitCommit:          GitCommit,
