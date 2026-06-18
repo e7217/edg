@@ -9,20 +9,84 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TemplateLoader loads asset templates from YAML files
+// TemplateLoader is an in-memory cache of asset templates. When backed by a
+// Store (NewTemplateLoaderWithStore), writes are persisted to SQLite while the
+// cache remains the authoritative read path, so the relation-create constraint
+// hot path stays in-memory.
 type TemplateLoader struct {
 	mu        sync.RWMutex
+	store     *Store
 	templates map[string]*AssetTemplate
 }
 
-// NewTemplateLoader creates a new loader
+// NewTemplateLoader creates an in-memory-only loader (no persistence).
 func NewTemplateLoader() *TemplateLoader {
 	return &TemplateLoader{
 		templates: make(map[string]*AssetTemplate),
 	}
 }
 
-// LoadFromDir loads all YAML templates from a directory
+// NewTemplateLoaderWithStore creates a loader backed by the given Store and
+// populates its cache from the database.
+func NewTemplateLoaderWithStore(store *Store) (*TemplateLoader, error) {
+	l := &TemplateLoader{
+		store:     store,
+		templates: make(map[string]*AssetTemplate),
+	}
+	if err := l.reloadFromStore(); err != nil {
+		return nil, err
+	}
+	return l, nil
+}
+
+func (l *TemplateLoader) reloadFromStore() error {
+	if l.store == nil {
+		return nil
+	}
+	templates, err := l.store.ListTemplates()
+	if err != nil {
+		return fmt.Errorf("failed to load templates from store: %w", err)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.templates = make(map[string]*AssetTemplate, len(templates))
+	for _, t := range templates {
+		l.templates[t.Name] = t
+	}
+	return nil
+}
+
+// Upsert persists a template (when store-backed) and updates the cache.
+func (l *TemplateLoader) Upsert(template *AssetTemplate) error {
+	if template == nil || template.Name == "" {
+		return fmt.Errorf("template name is required")
+	}
+	if l.store != nil {
+		if err := l.store.UpsertTemplate(template); err != nil {
+			return err
+		}
+	}
+	l.mu.Lock()
+	l.templates[template.Name] = template
+	l.mu.Unlock()
+	return nil
+}
+
+// Delete removes a template from the store (when store-backed) and the cache.
+func (l *TemplateLoader) Delete(name string) error {
+	if l.store != nil {
+		if err := l.store.DeleteTemplate(name); err != nil {
+			return err
+		}
+	}
+	l.mu.Lock()
+	delete(l.templates, name)
+	l.mu.Unlock()
+	return nil
+}
+
+// LoadFromDir imports all YAML templates from a directory (persisting to the
+// store when store-backed) and validates cross-template constraints.
 func (l *TemplateLoader) LoadFromDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -48,7 +112,7 @@ func (l *TemplateLoader) LoadFromDir(dir string) error {
 	return validateTemplateConstraints(l)
 }
 
-// LoadFromFile loads a template from a single YAML file
+// LoadFromFile imports a single YAML template file.
 func (l *TemplateLoader) LoadFromFile(path string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -64,10 +128,24 @@ func (l *TemplateLoader) LoadFromFile(path string) error {
 		return fmt.Errorf("template name is missing: %s", path)
 	}
 
-	l.mu.Lock()
-	l.templates[template.Name] = &template
-	l.mu.Unlock()
+	return l.Upsert(&template)
+}
 
+// ExportToDir writes each template to dir/<name>.yaml (round-trips with import).
+func (l *TemplateLoader) ExportToDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("failed to create export directory: %w", err)
+	}
+	for _, t := range l.List() {
+		data, err := yaml.Marshal(t)
+		if err != nil {
+			return fmt.Errorf("failed to encode template %s: %w", t.Name, err)
+		}
+		path := filepath.Join(dir, t.Name+".yaml")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return fmt.Errorf("failed to write template %s: %w", t.Name, err)
+		}
+	}
 	return nil
 }
 

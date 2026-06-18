@@ -64,8 +64,17 @@ INSTALL_DIR=/custom/path ./install.sh
 ### EDG Core
 - **Data Storage**: `./data/metadata.db` (auto-created)
 - **Schema Migrations**: embedded migrations run automatically on startup
-- **Templates**: `./templates/` (optional)
+- **Templates**: stored in SQLite (authoritative). The `templates.dir` directory
+  (default `./templates/`) is **seed-imported on first boot** when the DB has no
+  templates, and is the default target for the import/export commands below.
 - **Config file**: set `EDG_CORE_CONFIG` or pass `--config` to choose a core YAML file.
+
+Manage templates as files without running the server:
+
+```bash
+edg-core --import-templates ./templates   # YAML files -> SQLite (upsert)
+edg-core --export-templates ./out          # SQLite -> one YAML per template
+```
 
 **JetStream reliability defaults:**
 ```yaml

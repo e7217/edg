@@ -14,7 +14,6 @@ storage:
 
 templates:
   dir: /etc/edg/templates
-  auto_reload: true
 
 alarm:
   window_seconds: 5

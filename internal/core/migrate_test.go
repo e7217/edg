@@ -21,6 +21,9 @@ func TestRunMigrationsCreatesSchema(t *testing.T) {
 
 	assert.True(t, tableExists(t, db, "assets"))
 	assert.True(t, tableExists(t, db, "asset_relations"))
+	assert.True(t, tableExists(t, db, "templates"))
+	assert.True(t, tableExists(t, db, "template_resources"))
+	assert.True(t, tableExists(t, db, "template_constraints"))
 	assert.True(t, columnExists(t, db, "assets", "external_ids"))
 	assert.True(t, columnExists(t, db, "assets", "source"))
 	assert.True(t, columnExists(t, db, "assets", "attributes"))
@@ -64,19 +67,30 @@ func TestMigrationDownSteps(t *testing.T) {
 	defer db.Close()
 
 	require.NoError(t, runMigrations(db))
+	require.True(t, tableExists(t, db, "templates"))
 	require.True(t, columnExists(t, db, "assets", "source"))
 	require.True(t, indexExists(t, db, "idx_relations_source_type"))
 
+	// Undo 0004 (templates).
+	require.NoError(t, runMigrationSteps(db, -1))
+	assert.False(t, tableExists(t, db, "templates"))
+	assert.False(t, tableExists(t, db, "template_resources"))
+	assert.True(t, indexExists(t, db, "idx_relations_source_type"))
+	assert.True(t, tableExists(t, db, "assets"))
+
+	// Undo 0003 (relation indexes).
 	require.NoError(t, runMigrationSteps(db, -1))
 	assert.False(t, indexExists(t, db, "idx_relations_source_type"))
 	assert.False(t, indexExists(t, db, "idx_relations_target_type"))
 	assert.True(t, columnExists(t, db, "assets", "source"))
 	assert.True(t, tableExists(t, db, "assets"))
 
+	// Undo 0002 (asset extensions).
 	require.NoError(t, runMigrationSteps(db, -1))
 	assert.False(t, columnExists(t, db, "assets", "source"))
 	assert.True(t, tableExists(t, db, "assets"))
 
+	// Undo 0001 (init).
 	require.NoError(t, runMigrationSteps(db, -1))
 	assert.False(t, tableExists(t, db, "assets"))
 	assert.False(t, tableExists(t, db, "asset_relations"))
