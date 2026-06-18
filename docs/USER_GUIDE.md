@@ -344,8 +344,9 @@ outside this PoC scope.
 
 ## HTTP Metadata API
 
-EDG Core can expose a read-only HTTP API for browser dashboards and operator
-tools. It is disabled by default outside the development config.
+EDG Core can expose an HTTP API for browser dashboards and operator tools. Reads
+are available anonymously when no token is configured; **writes always require a
+non-empty bearer token**. It is disabled by default outside the development config.
 
 ```yaml
 http:
@@ -379,6 +380,16 @@ Available endpoints:
 | `GET` | `/api/v1/assets/{id}/subtree?relation_types=partOf&max_depth=10` | Recursive tree. |
 | `GET` | `/api/v1/assets/{id}/connected?relation_type=connectedTo` | One-hop relation query. |
 | `GET` | `/api/v1/relations?source=&target=&type=` | List and filter relations. |
+| `POST` | `/api/v1/assets` | Create an asset. **(write — token required)** |
+| `PUT` | `/api/v1/assets/{id}` | Replace an asset's metadata. **(write)** |
+| `DELETE` | `/api/v1/assets/{id}?source=` | Delete an asset. **(write)** |
+| `POST` | `/api/v1/relations` | Create a relation. **(write)** |
+| `DELETE` | `/api/v1/relations/{id}?source=` | Delete a relation. **(write)** |
+
+Write requests share the same validation, constraint enforcement, and change
+events as the NATS metadata API (both go through the core `MetadataService`).
+Errors map to HTTP status codes: `400` validation, `404` not found, `409`
+conflict (duplicate name), `422` constraint violation.
 
 Example:
 
