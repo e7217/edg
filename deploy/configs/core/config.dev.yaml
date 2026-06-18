@@ -16,10 +16,10 @@ templates:
   dir: ./templates
   auto_reload: true
 
-asset_registration:
-  # auto creates Asset records for unknown asset_id values.
-  # manual keeps validated data flowing without creating Asset records.
-  mode: auto
+# Behavior for data whose asset_id has no declared master-data record.
+# pass_through: publish un-enriched to validated (default).
+# dead_letter: route to the dead-letter subject instead.
+unknown_asset_policy: pass_through
 
 alarm:
   window_seconds: 5

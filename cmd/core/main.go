@@ -166,11 +166,11 @@ func main() {
 	defer enricher.Stop()
 
 	dataHandler := core.NewDataHandlerWithConfig(js, store, core.DataHandlerOptions{
-		ValidatedSubject:  cfg.JetStream.ValidatedSubject,
-		DeadLetterSubject: cfg.JetStream.DeadLetterSubject,
-		Events:            eventPublisher,
-		RegistrationMode:  cfg.AssetRegistration.Mode,
-		Enricher:          enricher,
+		ValidatedSubject:   cfg.JetStream.ValidatedSubject,
+		DeadLetterSubject:  cfg.JetStream.DeadLetterSubject,
+		Events:             eventPublisher,
+		UnknownAssetPolicy: cfg.UnknownAssetPolicy,
+		Enricher:           enricher,
 	})
 	metaHandler := core.NewMetaHandlerWithOptions(store, loader, core.MetaHandlerOptions{
 		Events:                eventPublisher,

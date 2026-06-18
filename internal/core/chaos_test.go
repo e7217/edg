@@ -68,7 +68,7 @@ func TestChaosJetStream_DiscardOldUnderMaxBytesPressure(t *testing.T) {
 	assert.Greater(t, info.State.FirstSeq, uint64(1))
 }
 
-func TestChaosDataHandler_ConcurrentAutoRegistrationSingleAsset(t *testing.T) {
+func TestChaosDataHandler_ConcurrentUndeclaredPassThrough(t *testing.T) {
 	_, _, js := startTestNATSServer(t, true)
 
 	_, err := js.AddStream(&nats.StreamConfig{
@@ -95,13 +95,15 @@ func TestChaosDataHandler_ConcurrentAutoRegistrationSingleAsset(t *testing.T) {
 	}
 	wg.Wait()
 
+	// pass_through (default): undeclared assets are never auto-registered,
+	// even under concurrency, and all messages still pass through.
 	asset, err := store.GetAsset("shared-asset")
 	require.NoError(t, err)
-	require.NotNil(t, asset)
+	require.Nil(t, asset)
 
 	assets, err := store.ListAssets()
 	require.NoError(t, err)
-	assert.Len(t, assets, 1)
+	assert.Len(t, assets, 0)
 	assert.Equal(t, 100, handler.GetDataCount())
 }
 

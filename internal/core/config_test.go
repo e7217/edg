@@ -26,10 +26,10 @@ func TestDefaultCoreConfig_JetStreamPolicy(t *testing.T) {
 	assert.True(t, cfg.Storage.AutoMigrate)
 }
 
-func TestDefaultCoreConfig_AssetRegistrationMode(t *testing.T) {
+func TestDefaultCoreConfig_UnknownAssetPolicy(t *testing.T) {
 	cfg := DefaultCoreConfig()
 
-	assert.Equal(t, RegistrationModeAuto, cfg.AssetRegistration.Mode)
+	assert.Equal(t, UnknownAssetPolicyPassThrough, cfg.UnknownAssetPolicy)
 }
 
 func TestDefaultCoreConfig_Alarm(t *testing.T) {
@@ -170,7 +170,20 @@ jetstream:
 	assert.Equal(t, nats.LimitsPolicy, streamConfig.Retention)
 }
 
-func TestLoadCoreConfig_AssetRegistrationModeFromYAML(t *testing.T) {
+func TestLoadCoreConfig_UnknownAssetPolicyFromYAML(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+unknown_asset_policy: dead_letter
+`), 0644)
+	require.NoError(t, err)
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, UnknownAssetPolicyDeadLetter, cfg.UnknownAssetPolicy)
+}
+
+func TestLoadCoreConfig_LegacyAssetRegistrationIgnored(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
 asset_registration:
@@ -181,7 +194,8 @@ asset_registration:
 	cfg, err := LoadCoreConfig(path)
 	require.NoError(t, err)
 
-	assert.Equal(t, RegistrationModeManual, cfg.AssetRegistration.Mode)
+	// Legacy key is ignored; policy falls back to the default.
+	assert.Equal(t, UnknownAssetPolicyPassThrough, cfg.UnknownAssetPolicy)
 }
 
 func TestLoadCoreConfig_AlarmFromYAML(t *testing.T) {
@@ -235,18 +249,17 @@ http:
 	assert.Equal(t, []string{"http://localhost:3000"}, cfg.HTTP.CORSAllowedOrigins)
 }
 
-func TestLoadCoreConfig_RejectsInvalidAssetRegistrationMode(t *testing.T) {
+func TestLoadCoreConfig_RejectsInvalidUnknownAssetPolicy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`
-asset_registration:
-  mode: disabled
+unknown_asset_policy: bogus
 `), 0644)
 	require.NoError(t, err)
 
 	_, err = LoadCoreConfig(path)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `invalid asset_registration.mode: "disabled"`)
+	assert.Contains(t, err.Error(), `invalid unknown_asset_policy: "bogus"`)
 }
 
 func TestLoadCoreConfig_RejectsInvalidAlarmConfig(t *testing.T) {
