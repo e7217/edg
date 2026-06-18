@@ -56,56 +56,19 @@ func TestHandleAssetData_InvalidJSON(t *testing.T) {
 	assert.Equal(t, 0, handler.GetDataCount())
 }
 
-// TestHandleAssetData_AutoRegister tests auto-registration of unknown assets
-func TestHandleAssetData_AutoRegister(t *testing.T) {
+// TestHandleAssetData_PassThrough_DoesNotRegister verifies the default policy:
+// an undeclared asset_id is not registered, but its data still passes through.
+func TestHandleAssetData_PassThrough_DoesNotRegister(t *testing.T) {
 	store, err := NewStore(":memory:")
 	require.NoError(t, err)
 	defer store.Close()
 
 	handler := NewDataHandler(nil, store)
 
+	before := undeclaredAssets.Value()
 	tempValue := 25.5
 	data := &AssetData{
-		AssetID:   "new-sensor",
-		Timestamp: 1234567890,
-		Values: []TagValue{
-			{Name: "temperature", Number: &tempValue},
-		},
-	}
-
-	jsonData, err := json.Marshal(data)
-	require.NoError(t, err)
-
-	msg := &nats.Msg{
-		Subject: "platform.data.raw",
-		Data:    jsonData,
-	}
-
-	// Process message
-	handler.HandleAssetData(msg)
-
-	// Verify asset was auto-registered
-	asset, err := store.GetAsset("new-sensor")
-	require.NoError(t, err)
-	require.NotNil(t, asset)
-	assert.Equal(t, "new-sensor", asset.ID)
-	assert.Equal(t, "new-sensor", asset.Name)
-	assert.Equal(t, SourceAuto, asset.Source)
-	assert.False(t, asset.UpdatedAt.IsZero())
-}
-
-func TestHandleAssetData_ManualMode_DoesNotRegister(t *testing.T) {
-	store, err := NewStore(":memory:")
-	require.NoError(t, err)
-	defer store.Close()
-
-	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
-		RegistrationMode: RegistrationModeManual,
-	})
-
-	tempValue := 25.5
-	data := &AssetData{
-		AssetID:   "manual-sensor",
+		AssetID:   "undeclared-sensor",
 		Timestamp: 1234567890,
 		Values: []TagValue{
 			{Name: "temperature", Number: &tempValue},
@@ -116,14 +79,48 @@ func TestHandleAssetData_ManualMode_DoesNotRegister(t *testing.T) {
 	require.NoError(t, err)
 
 	handler.HandleAssetData(&nats.Msg{
-		Subject: "platform.data.raw",
+		Subject: "platform.data.asset",
 		Data:    jsonData,
 	})
 
-	asset, err := store.GetAsset("manual-sensor")
+	asset, err := store.GetAsset("undeclared-sensor")
 	require.NoError(t, err)
 	assert.Nil(t, asset)
 	assert.Equal(t, 1, handler.GetDataCount())
+	assert.Equal(t, before+1, undeclaredAssets.Value())
+}
+
+// TestHandleAssetData_DeadLetterPolicy_SkipsValidated verifies the dead_letter
+// policy: an undeclared asset_id returns early (not stored / not validated).
+func TestHandleAssetData_DeadLetterPolicy_SkipsValidated(t *testing.T) {
+	store, err := NewStore(":memory:")
+	require.NoError(t, err)
+	defer store.Close()
+
+	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
+		UnknownAssetPolicy: UnknownAssetPolicyDeadLetter,
+	})
+
+	before := undeclaredAssets.Value()
+	tempValue := 25.5
+	data := &AssetData{
+		AssetID: "undeclared-dl-sensor",
+		Values:  []TagValue{{Name: "temperature", Number: &tempValue}},
+	}
+
+	jsonData, err := json.Marshal(data)
+	require.NoError(t, err)
+
+	handler.HandleAssetData(&nats.Msg{
+		Subject: "platform.data.asset",
+		Data:    jsonData,
+	})
+
+	assert.Equal(t, 0, handler.GetDataCount())
+	assert.Equal(t, before+1, undeclaredAssets.Value())
+	asset, err := store.GetAsset("undeclared-dl-sensor")
+	require.NoError(t, err)
+	assert.Nil(t, asset)
 }
 
 func TestNewDataHandlerWithSubjects(t *testing.T) {
@@ -141,22 +138,22 @@ func TestNewDataHandlerWithSubjects(t *testing.T) {
 func TestNewDataHandlerWithConfig(t *testing.T) {
 	publisher := NewEventPublisher(nil)
 	handler := NewDataHandlerWithConfig(nil, nil, DataHandlerOptions{
-		ValidatedSubject:  "custom.validated",
-		DeadLetterSubject: "custom.deadletter",
-		Events:            publisher,
-		RegistrationMode:  RegistrationModeManual,
+		ValidatedSubject:   "custom.validated",
+		DeadLetterSubject:  "custom.deadletter",
+		Events:             publisher,
+		UnknownAssetPolicy: UnknownAssetPolicyDeadLetter,
 	})
 
 	require.NotNil(t, handler)
 	assert.Equal(t, "custom.validated", handler.validatedSubject)
 	assert.Equal(t, "custom.deadletter", handler.deadLetterSubject)
-	assert.Equal(t, RegistrationModeManual, handler.registrationMode)
+	assert.Equal(t, UnknownAssetPolicyDeadLetter, handler.unknownAssetPolicy)
 	assert.Same(t, publisher, handler.events)
 
 	defaults := NewDataHandlerWithConfig(nil, nil, DataHandlerOptions{})
 	assert.Equal(t, DefaultValidatedDataSubject, defaults.validatedSubject)
 	assert.Equal(t, DefaultDeadLetterSubject, defaults.deadLetterSubject)
-	assert.Equal(t, RegistrationModeAuto, defaults.registrationMode)
+	assert.Equal(t, UnknownAssetPolicyPassThrough, defaults.unknownAssetPolicy)
 }
 
 func TestNewDataHandlerWithSubjectsAndEvents(t *testing.T) {
@@ -169,8 +166,7 @@ func TestNewDataHandlerWithSubjectsAndEvents(t *testing.T) {
 	assert.Same(t, publisher, handler.events)
 }
 
-// TestHandleAssetData_AutoRegisterPublishesChangedEvent tests auto-registration events.
-func TestHandleAssetData_AutoRegisterPublishesChangedEvent(t *testing.T) {
+func TestHandleAssetData_PassThrough_NoChangeEvent(t *testing.T) {
 	_, nc, _ := startTestNATSServer(t, false)
 
 	store, err := NewStore(":memory:")
@@ -179,50 +175,6 @@ func TestHandleAssetData_AutoRegisterPublishesChangedEvent(t *testing.T) {
 
 	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
 	handler := NewDataHandler(nil, store, NewEventPublisher(nc))
-
-	tempValue := 25.5
-	data := &AssetData{
-		AssetID:   "auto-sensor",
-		Timestamp: time.Now().Unix(),
-		Values: []TagValue{
-			{Name: "temperature", Number: &tempValue},
-		},
-	}
-
-	jsonData, err := json.Marshal(data)
-	require.NoError(t, err)
-
-	handler.HandleAssetData(&nats.Msg{
-		Subject: "platform.data.raw",
-		Data:    jsonData,
-	})
-
-	ev := requireMetaEvent(t, assetEvents)
-	assert.Equal(t, EventCreated, ev.EventType)
-	assert.Equal(t, EntityAsset, ev.EntityType)
-	assert.Equal(t, "auto-sensor", ev.EntityID)
-	assert.Equal(t, SourceAuto, ev.Source)
-	assert.Empty(t, ev.Before)
-	require.NotEmpty(t, ev.After)
-
-	var after Asset
-	require.NoError(t, json.Unmarshal(ev.After, &after))
-	assert.Equal(t, "auto-sensor", after.ID)
-	assert.Equal(t, SourceAuto, after.Source)
-}
-
-func TestHandleAssetData_ManualMode_NoChangeEvent(t *testing.T) {
-	_, nc, _ := startTestNATSServer(t, false)
-
-	store, err := NewStore(":memory:")
-	require.NoError(t, err)
-	defer store.Close()
-
-	assetEvents := subscribeMetaEvents(t, nc, SubjectAssetChanged)
-	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
-		Events:           NewEventPublisher(nc),
-		RegistrationMode: RegistrationModeManual,
-	})
 
 	tempValue := 25.5
 	data := &AssetData{
@@ -274,7 +226,7 @@ func TestHandleAssetData_ExistingAssetDoesNotPublishChangedEvent(t *testing.T) {
 	requireNoMetaEvent(t, assetEvents)
 }
 
-func TestHandleAssetData_ManualMode_ExistingAssetUnaffected(t *testing.T) {
+func TestHandleAssetData_ExistingAssetUnaffected(t *testing.T) {
 	store, err := NewStore(":memory:")
 	require.NoError(t, err)
 	defer store.Close()
@@ -288,9 +240,7 @@ func TestHandleAssetData_ManualMode_ExistingAssetUnaffected(t *testing.T) {
 		UpdatedAt: createdAt,
 	}))
 
-	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
-		RegistrationMode: RegistrationModeManual,
-	})
+	handler := NewDataHandler(nil, store)
 
 	tempValue := 25.5
 	data := &AssetData{

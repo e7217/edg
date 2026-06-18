@@ -102,7 +102,8 @@ func TestHandleAssetData_WithJetStream(t *testing.T) {
 	assert.Equal(t, 1, handler.GetDataCount())
 }
 
-// TestHandleAssetData_WithJetStreamAndStore tests both JetStream and auto-registration
+// TestHandleAssetData_WithJetStreamAndStore tests JetStream publish with pass_through
+// for an undeclared asset (no auto-registration).
 func TestHandleAssetData_WithJetStreamAndStore(t *testing.T) {
 	_, _, js := startTestNATSServer(t, true)
 
@@ -140,13 +141,12 @@ func TestHandleAssetData_WithJetStreamAndStore(t *testing.T) {
 	// Process message
 	handler.HandleAssetData(msg)
 
-	// Verify asset was auto-registered
+	// pass_through (default): the undeclared asset is NOT registered.
 	asset, err := store.GetAsset("new-sensor")
 	require.NoError(t, err)
-	require.NotNil(t, asset)
-	assert.Equal(t, "new-sensor", asset.ID)
+	assert.Nil(t, asset)
 
-	// Verify data was stored
+	// Verify data was still stored (passed through to validated).
 	assert.Equal(t, 1, handler.GetDataCount())
 }
 
@@ -208,11 +208,11 @@ func TestHandleAssetData_WithEnricherPublishesMetadata(t *testing.T) {
 	handler.mu.Unlock()
 }
 
-func TestHandleAssetData_ManualModePublishesValidatedData(t *testing.T) {
+func TestHandleAssetData_PassThroughPublishesValidatedData(t *testing.T) {
 	_, nc, js := startTestNATSServer(t, true)
 
 	_, err := js.AddStream(&nats.StreamConfig{
-		Name:     "MANUAL_MODE_STREAM",
+		Name:     "PASSTHROUGH_STREAM",
 		Subjects: []string{"platform.data.>"},
 		Storage:  nats.MemoryStorage,
 	})
@@ -222,9 +222,8 @@ func TestHandleAssetData_ManualModePublishesValidatedData(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	handler := NewDataHandlerWithConfig(js, store, DataHandlerOptions{
-		RegistrationMode: RegistrationModeManual,
-	})
+	// pass_through is the default policy.
+	handler := NewDataHandler(js, store)
 
 	tempValue := 25.5
 	data := &AssetData{

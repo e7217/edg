@@ -145,19 +145,26 @@ Incoming JSON from adapters:
 
 EDG Core stores asset metadata in SQLite and exposes it through NATS metadata subjects.
 
-### Asset Registration Modes
+### Undeclared Asset Policy
 
-EDG Core controls unknown asset handling with `asset_registration.mode`.
+Master data is created explicitly (metadata API / CLI / UI / import). The data
+plane no longer auto-registers assets. EDG Core controls what happens to data
+whose `asset_id` has no declared Asset record with `unknown_asset_policy`.
 
-| Mode | Behavior |
+| Policy | Behavior |
 | --- | --- |
-| `auto` | Default. Unknown `asset_id` values from data messages create Asset records with `source: "auto"` and publish an asset-created metadata event. |
-| `manual` | Unknown `asset_id` values continue through the validated data subject, but EDG Core does not create Asset records or publish asset-created metadata events. |
+| `pass_through` | Default. The message is published to the validated data subject un-enriched (no ontology metadata is added). No Asset record is created. |
+| `dead_letter` | The message is routed to the dead-letter subject instead of the validated subject. |
+
+Either way, an undeclared-asset counter (`edg_core_undeclared_assets`, expvar) is
+incremented for operator visibility.
 
 ```yaml
-asset_registration:
-  mode: auto
+unknown_asset_policy: pass_through
 ```
+
+> The removed `asset_registration:` block is ignored if still present; EDG Core
+> logs a one-time startup warning pointing to `unknown_asset_policy`.
 
 Asset records include:
 - `id`: stable asset identifier

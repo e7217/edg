@@ -2,6 +2,7 @@ package core
 
 import (
 	"encoding/json"
+	"errors"
 	"expvar"
 	"log"
 	"sync"
@@ -12,29 +13,34 @@ import (
 
 // DataHandler handles NATS messages for asset data
 type DataHandler struct {
-	mu                sync.Mutex
-	data              []AssetData           // in-memory storage (PoC)
-	store             *Store                // for auto-registration
-	js                nats.JetStreamContext // for publishing to JetStream
-	validatedSubject  string
-	deadLetterSubject string
-	registrationMode  string
-	events            *EventPublisher // for metadata change notifications
-	enricher          *Enricher
+	mu                 sync.Mutex
+	data               []AssetData           // in-memory storage (PoC)
+	store              *Store                // for undeclared-asset detection
+	js                 nats.JetStreamContext // for publishing to JetStream
+	validatedSubject   string
+	deadLetterSubject  string
+	unknownAssetPolicy string
+	events             *EventPublisher // for metadata change notifications
+	enricher           *Enricher
 }
 
 var (
 	jetStreamPublishFailures = expvar.NewInt("edg_core_jetstream_publish_failures")
 	jetStreamDeadLetters     = expvar.NewInt("edg_core_jetstream_dead_letters")
 	jetStreamDeadLetterFails = expvar.NewInt("edg_core_jetstream_dead_letter_failures")
+	undeclaredAssets         = expvar.NewInt("edg_core_undeclared_assets")
 )
 
+// errUndeclaredAsset is the dead-letter reason when an undeclared asset_id is
+// routed under unknown_asset_policy = dead_letter.
+var errUndeclaredAsset = errors.New("undeclared asset")
+
 type DataHandlerOptions struct {
-	ValidatedSubject  string
-	DeadLetterSubject string
-	Events            *EventPublisher
-	RegistrationMode  string
-	Enricher          *Enricher
+	ValidatedSubject   string
+	DeadLetterSubject  string
+	Events             *EventPublisher
+	UnknownAssetPolicy string
+	Enricher           *Enricher
 }
 
 // DeadLetterMessage records a failed core-to-JetStream publish attempt.
@@ -65,20 +71,20 @@ func NewDataHandlerWithConfig(js nats.JetStreamContext, store *Store, opts DataH
 	if deadLetterSubject == "" {
 		deadLetterSubject = DefaultDeadLetterSubject
 	}
-	registrationMode := opts.RegistrationMode
-	if registrationMode == "" {
-		registrationMode = RegistrationModeAuto
+	unknownAssetPolicy := opts.UnknownAssetPolicy
+	if unknownAssetPolicy == "" {
+		unknownAssetPolicy = UnknownAssetPolicyPassThrough
 	}
 
 	return &DataHandler{
-		data:              make([]AssetData, 0),
-		store:             store,
-		js:                js,
-		validatedSubject:  validatedSubject,
-		deadLetterSubject: deadLetterSubject,
-		registrationMode:  registrationMode,
-		events:            opts.Events,
-		enricher:          opts.Enricher,
+		data:               make([]AssetData, 0),
+		store:              store,
+		js:                 js,
+		validatedSubject:   validatedSubject,
+		deadLetterSubject:  deadLetterSubject,
+		unknownAssetPolicy: unknownAssetPolicy,
+		events:             opts.Events,
+		enricher:           opts.Enricher,
 	}
 }
 
@@ -102,31 +108,17 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 		return
 	}
 
-	// Register metadata for unknown assets only when automatic registration is enabled.
+	// Undeclared assets follow the configured unknown_asset_policy. Master data is
+	// created explicitly (API/CLI/UI/import); the data plane no longer auto-registers.
 	if h.store != nil {
 		if exists, _ := h.store.AssetExists(data.AssetID); !exists {
-			switch h.registrationMode {
-			case RegistrationModeAuto:
-				now := time.Now()
-				asset := &Asset{
-					ID:        data.AssetID,
-					Name:      data.AssetID,
-					Source:    SourceAuto,
-					CreatedAt: now,
-					UpdatedAt: now,
-				}
-				if err := h.store.CreateAsset(asset); err == nil {
-					h.events.PublishAssetChanged(MetaChangeEvent{
-						EventType: EventCreated,
-						EntityID:  asset.ID,
-						Source:    SourceAuto,
-						After:     asset,
-					})
-					log.Printf("[Core] Auto-registered asset: %s", data.AssetID)
-				}
-			case RegistrationModeManual:
-				log.Printf("[Core] unregistered asset (manual mode): %s", data.AssetID)
+			undeclaredAssets.Add(1)
+			if h.unknownAssetPolicy == UnknownAssetPolicyDeadLetter {
+				log.Printf("[Core] undeclared asset -> dead-letter: %s", data.AssetID)
+				h.publishDeadLetter(msg, errUndeclaredAsset)
+				return
 			}
+			log.Printf("[Core] undeclared asset (pass_through): %s", data.AssetID)
 		}
 	}
 
@@ -169,7 +161,7 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 }
 
 func (h *DataHandler) publishDeadLetter(msg *nats.Msg, publishErr error) {
-	if h.deadLetterSubject == "" {
+	if h.deadLetterSubject == "" || h.js == nil {
 		return
 	}
 

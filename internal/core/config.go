@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -15,22 +16,22 @@ const (
 )
 
 const (
-	RegistrationModeAuto   = "auto"
-	RegistrationModeManual = "manual"
+	UnknownAssetPolicyPassThrough = "pass_through"
+	UnknownAssetPolicyDeadLetter  = "dead_letter"
 )
 
 // CoreConfig contains runtime settings for the embedded core process.
 type CoreConfig struct {
-	NATS              NATSConfig              `yaml:"nats"`
-	Storage           StorageConfig           `yaml:"storage"`
-	Templates         TemplateConfig          `yaml:"templates"`
-	Logging           LoggingConfig           `yaml:"logging"`
-	JetStream         JetStreamConfig         `yaml:"jetstream"`
-	AssetRegistration AssetRegistrationConfig `yaml:"asset_registration"`
-	Alarm             AlarmConfig             `yaml:"alarm"`
-	Constraints       ConstraintsConfig       `yaml:"constraints"`
-	HTTP              HTTPConfig              `yaml:"http"`
-	Sink              SinkConfig              `yaml:"sink"`
+	NATS               NATSConfig        `yaml:"nats"`
+	Storage            StorageConfig     `yaml:"storage"`
+	Templates          TemplateConfig    `yaml:"templates"`
+	Logging            LoggingConfig     `yaml:"logging"`
+	JetStream          JetStreamConfig   `yaml:"jetstream"`
+	UnknownAssetPolicy string            `yaml:"unknown_asset_policy"`
+	Alarm              AlarmConfig       `yaml:"alarm"`
+	Constraints        ConstraintsConfig `yaml:"constraints"`
+	HTTP               HTTPConfig        `yaml:"http"`
+	Sink               SinkConfig        `yaml:"sink"`
 }
 
 type NATSConfig struct {
@@ -61,10 +62,6 @@ type JetStreamConfig struct {
 	Stream            JetStreamStreamConfig `yaml:"stream"`
 	ValidatedSubject  string                `yaml:"validated_subject"`
 	DeadLetterSubject string                `yaml:"dead_letter_subject"`
-}
-
-type AssetRegistrationConfig struct {
-	Mode string `yaml:"mode"`
 }
 
 type AlarmConfig struct {
@@ -144,9 +141,7 @@ func DefaultCoreConfig() CoreConfig {
 				Discard:   "old",
 			},
 		},
-		AssetRegistration: AssetRegistrationConfig{
-			Mode: RegistrationModeAuto,
-		},
+		UnknownAssetPolicy: UnknownAssetPolicyPassThrough,
 		Alarm: AlarmConfig{
 			WindowSeconds:     int(DefaultAlarmWindow / time.Second),
 			MaxTraversalDepth: DefaultTraversalMaxDepth,
@@ -184,11 +179,24 @@ func LoadCoreConfig(path string) (CoreConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("failed to parse core config: %w", err)
 	}
+	warnLegacyConfigKeys(data)
 	cfg.applyDefaults()
 	if err := cfg.validate(); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+// warnLegacyConfigKeys logs a one-time warning when removed config keys are still
+// present in a user's YAML (yaml.Unmarshal silently ignores unknown keys).
+func warnLegacyConfigKeys(data []byte) {
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	if _, ok := raw["asset_registration"]; ok {
+		log.Printf("[Config] 'asset_registration' is removed; use 'unknown_asset_policy' (pass_through|dead_letter)")
+	}
 }
 
 func (c *CoreConfig) applyDefaults() {
@@ -221,8 +229,8 @@ func (c *CoreConfig) applyDefaults() {
 	if c.JetStream.DeadLetterSubject == "" {
 		c.JetStream.DeadLetterSubject = defaults.JetStream.DeadLetterSubject
 	}
-	if c.AssetRegistration.Mode == "" {
-		c.AssetRegistration.Mode = defaults.AssetRegistration.Mode
+	if c.UnknownAssetPolicy == "" {
+		c.UnknownAssetPolicy = defaults.UnknownAssetPolicy
 	}
 	if c.Alarm.WindowSeconds == 0 {
 		c.Alarm.WindowSeconds = defaults.Alarm.WindowSeconds
@@ -265,10 +273,10 @@ func (c *SinkConfig) applyDefaults(defaults SinkConfig) {
 }
 
 func (c CoreConfig) validate() error {
-	switch c.AssetRegistration.Mode {
-	case RegistrationModeAuto, RegistrationModeManual:
+	switch c.UnknownAssetPolicy {
+	case UnknownAssetPolicyPassThrough, UnknownAssetPolicyDeadLetter:
 	default:
-		return fmt.Errorf("invalid asset_registration.mode: %q (allowed: auto, manual)", c.AssetRegistration.Mode)
+		return fmt.Errorf("invalid unknown_asset_policy: %q (allowed: pass_through, dead_letter)", c.UnknownAssetPolicy)
 	}
 	if c.Alarm.WindowSeconds <= 0 {
 		return fmt.Errorf("invalid alarm.window_seconds: %d (must be > 0)", c.Alarm.WindowSeconds)
