@@ -16,6 +16,7 @@ import (
 
 	"github.com/e7217/edg/internal/core"
 	"github.com/e7217/edg/internal/httpapi"
+	"github.com/e7217/edg/internal/natsauth"
 )
 
 var (
@@ -98,10 +99,35 @@ func main() {
 
 	// 1. Embedded NATS Server configuration
 	opts := &server.Options{
+		Host:      cfg.NATS.Host,
 		Port:      cfg.NATS.Port,
-		HTTPPort:  cfg.NATS.HTTPPort, // for monitoring
-		JetStream: true,              // Enable JetStream for message persistence
+		HTTPHost:  cfg.NATS.HTTPHost, // monitoring; loopback by default (ADR 0007)
+		HTTPPort:  cfg.NATS.HTTPPort,
+		JetStream: true, // Enable JetStream for message persistence
 		StoreDir:  cfg.NATS.StoreDir,
+	}
+
+	// 1.1. Role-based subject authorization (ADR 0007).
+	coreIdentity, err := natsauth.NewEphemeralCore()
+	if err != nil {
+		log.Fatalf("Failed to mint core credential: %v", err)
+	}
+	var credsSource natsauth.Source
+	credsPath := cfg.NATSCredentialsFile()
+	if cfg.NATS.Auth.Mode != core.NATSAuthModeOff {
+		var creds natsauth.Credentials
+		creds, credsSource, err = natsauth.LoadOrCreate(credsPath)
+		if err != nil {
+			log.Fatalf("Failed to resolve NATS credentials: %v", err)
+		}
+		if err := natsauth.Apply(opts, natsauth.Config{
+			Mode:   cfg.NATS.Auth.Mode,
+			Stream: cfg.JetStream.Stream.Name,
+			Creds:  creds,
+			Core:   coreIdentity,
+		}); err != nil {
+			log.Fatalf("Failed to apply NATS authorization: %v", err)
+		}
 	}
 
 	ns, err := server.NewServer(opts)
@@ -119,12 +145,21 @@ func main() {
 
 	log.Println("=================================")
 	log.Println("  EDG Platform Core Started")
-	log.Printf("  NATS: nats://localhost:%d", cfg.NATS.Port)
-	log.Printf("  Monitor: http://localhost:%d", cfg.NATS.HTTPPort)
+	log.Printf("  NATS: nats://%s:%d", cfg.NATS.Host, cfg.NATS.Port)
+	log.Printf("  Monitor: http://%s:%d", cfg.NATS.HTTPHost, cfg.NATS.HTTPPort)
+	logAuthBanner(cfg, credsPath, credsSource)
 	log.Println("=================================")
 
-	// 3. Connect as internal client
-	nc, err := nats.Connect(fmt.Sprintf("nats://localhost:%d", cfg.NATS.Port))
+	// 3. Connect as internal client.
+	//
+	// InProcessServer bypasses the TCP listener entirely, so the core identity
+	// never crosses a socket and is unaffected by the bind address. Auth is
+	// still enforced on this path.
+	ncOpts := []nats.Option{nats.InProcessServer(ns)}
+	if cfg.NATS.Auth.Mode != core.NATSAuthModeOff {
+		ncOpts = append(ncOpts, nats.UserInfo(coreIdentity.Username, coreIdentity.Secret))
+	}
+	nc, err := nats.Connect("", ncOpts...)
 	if err != nil {
 		log.Fatalf("Failed to connect to NATS: %v", err)
 	}
@@ -331,4 +366,26 @@ func discoverConfigPath() string {
 		}
 	}
 	return ""
+}
+
+// logAuthBanner tells the operator where the credentials live and what the
+// current posture is. It never prints a secret: the file is the only place a
+// password appears, and it is mode 0600.
+func logAuthBanner(cfg core.CoreConfig, credsPath string, src natsauth.Source) {
+	switch cfg.NATS.Auth.Mode {
+	case core.NATSAuthModeOff:
+		log.Printf("  Auth: DISABLED (nats.auth.mode=off) — loopback only")
+		return
+	case core.NATSAuthModeCompat:
+		log.Printf("  Auth: compat — anonymous clients get the least-privileged 'legacy' role")
+	case core.NATSAuthModeStrict:
+		log.Printf("  Auth: strict — credentials required")
+	}
+	log.Printf("  Credentials (%s): %s", src, credsPath)
+	if src == natsauth.SourceCreated {
+		log.Printf("  Adapters: export EDG_NATS_USER=adapter EDG_NATS_PASSWORD=$(jq -r .adapter %s)", credsPath)
+	}
+	if natsauth.InsecureMode(credsPath) {
+		log.Printf("  WARNING: %s is readable beyond its owner; run: chmod 600 %s", credsPath, credsPath)
+	}
 }

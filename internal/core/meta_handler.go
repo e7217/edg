@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"log"
+	"sort"
 
 	"github.com/nats-io/nats.go"
 )
@@ -65,7 +66,22 @@ func NewMetaHandlerWithOptions(store *Store, loader *TemplateLoader, opts MetaHa
 
 // RegisterHandlers registers NATS subscriptions
 func (h *MetaHandler) RegisterHandlers(nc *nats.Conn) error {
-	handlers := map[string]nats.MsgHandler{
+	for subject, handler := range h.handlers() {
+		if _, err := nc.Subscribe(subject, handler); err != nil {
+			return err
+		}
+		log.Printf("[Meta] Subscribed: %s", subject)
+	}
+
+	return nil
+}
+
+// handlers is the single source of truth for the metadata request/reply
+// surface. MetaRequestSubjects derives from it so that the NATS authorization
+// matrix (internal/natsauth) cannot drift: adding a subject here without
+// classifying it there fails internal/natsauth's subjects_test.
+func (h *MetaHandler) handlers() map[string]nats.MsgHandler {
+	return map[string]nats.MsgHandler{
 		SubjectAssetCreate:      h.handleAssetCreate,
 		SubjectAssetGet:         h.handleAssetGet,
 		SubjectAssetList:        h.handleAssetList,
@@ -85,15 +101,19 @@ func (h *MetaHandler) RegisterHandlers(nc *nats.Conn) error {
 		SubjectAssetSubtree:     h.handleAssetSubtree,
 		SubjectAssetConnected:   h.handleAssetConnected,
 	}
+}
 
-	for subject, handler := range handlers {
-		if _, err := nc.Subscribe(subject, handler); err != nil {
-			return err
-		}
-		log.Printf("[Meta] Subscribed: %s", subject)
+// MetaRequestSubjects returns every subject the metadata plane answers on, in
+// sorted order. It exists so that the authorization matrix can be checked for
+// completeness by a test rather than by review.
+func MetaRequestSubjects() []string {
+	var h *MetaHandler
+	subjects := make([]string, 0, 15)
+	for subject := range h.handlers() {
+		subjects = append(subjects, subject)
 	}
-
-	return nil
+	sort.Strings(subjects)
+	return subjects
 }
 
 // Response is a common response structure

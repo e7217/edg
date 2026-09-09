@@ -3,7 +3,10 @@ package core
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -20,6 +23,24 @@ const (
 	UnknownAssetPolicyDeadLetter  = "dead_letter"
 )
 
+// NATS authorization modes. These mirror internal/natsauth's Mode* constants;
+// internal/core does not import internal/natsauth so that natsauth can import
+// core subjects in its tests without a cycle.
+const (
+	NATSAuthModeCompat = "compat"
+	NATSAuthModeStrict = "strict"
+	NATSAuthModeOff    = "off"
+)
+
+// EnvNATSCredentialsFile overrides nats.auth.credentials_file, matching the
+// EDG_SINK_URL / EDG_HTTP_TOKEN convention of naming the variable in config
+// rather than storing the value there.
+const EnvNATSCredentialsFile = "EDG_NATS_CREDENTIALS_FILE"
+
+// defaultCredentialsFileName is created under storage.data_dir when
+// nats.auth.credentials_file is empty.
+const defaultCredentialsFileName = "nats-credentials.json"
+
 // CoreConfig contains runtime settings for the embedded core process.
 type CoreConfig struct {
 	NATS               NATSConfig        `yaml:"nats"`
@@ -35,10 +56,29 @@ type CoreConfig struct {
 }
 
 type NATSConfig struct {
-	Port     int    `yaml:"port"`
-	HTTPPort int    `yaml:"http_port"`
-	LogLevel string `yaml:"log_level"`
-	StoreDir string `yaml:"store_dir"`
+	// Host is the client-port bind address. Defaults to 0.0.0.0: an edge
+	// gateway exists to serve remote adapters and sibling containers.
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+	// HTTPHost is the monitoring-port bind address. Defaults to 127.0.0.1
+	// because nats-server serves /varz, /connz and /debug/vars there with no
+	// authentication mechanism of any kind.
+	HTTPHost string         `yaml:"http_host"`
+	HTTPPort int            `yaml:"http_port"`
+	LogLevel string         `yaml:"log_level"`
+	StoreDir string         `yaml:"store_dir"`
+	Auth     NATSAuthConfig `yaml:"auth"`
+}
+
+// NATSAuthConfig selects the authorization posture of the embedded server.
+// See ADR 0007 and internal/natsauth.
+type NATSAuthConfig struct {
+	// Mode is one of NATSAuthModeCompat, NATSAuthModeStrict, NATSAuthModeOff.
+	Mode string `yaml:"mode"`
+	// CredentialsFile overrides the default <storage.data_dir>/nats-credentials.json.
+	// Resolve it with CoreConfig.NATSCredentialsFile, which also honours
+	// EDG_NATS_CREDENTIALS_FILE.
+	CredentialsFile string `yaml:"credentials_file"`
 }
 
 type StorageConfig struct {
@@ -111,10 +151,13 @@ type JetStreamStreamConfig struct {
 func DefaultCoreConfig() CoreConfig {
 	return CoreConfig{
 		NATS: NATSConfig{
+			Host:     "0.0.0.0",
 			Port:     4222,
+			HTTPHost: "127.0.0.1",
 			HTTPPort: 8222,
 			LogLevel: "info",
 			StoreDir: "./data/jetstream",
+			Auth:     NATSAuthConfig{Mode: NATSAuthModeCompat},
 		},
 		Storage: StorageConfig{
 			MetadataDB:    "./data/metadata.db",
@@ -204,8 +247,17 @@ func warnLegacyConfigKeys(data []byte) {
 func (c *CoreConfig) applyDefaults() {
 	defaults := DefaultCoreConfig()
 
+	if c.NATS.Host == "" {
+		c.NATS.Host = defaults.NATS.Host
+	}
 	if c.NATS.Port == 0 {
 		c.NATS.Port = defaults.NATS.Port
+	}
+	if c.NATS.HTTPHost == "" {
+		c.NATS.HTTPHost = defaults.NATS.HTTPHost
+	}
+	if c.NATS.Auth.Mode == "" {
+		c.NATS.Auth.Mode = defaults.NATS.Auth.Mode
 	}
 	if c.NATS.HTTPPort == 0 {
 		c.NATS.HTTPPort = defaults.NATS.HTTPPort
@@ -279,6 +331,20 @@ func (c CoreConfig) validate() error {
 	case UnknownAssetPolicyPassThrough, UnknownAssetPolicyDeadLetter:
 	default:
 		return fmt.Errorf("invalid unknown_asset_policy: %q (allowed: pass_through, dead_letter)", c.UnknownAssetPolicy)
+	}
+	switch c.NATS.Auth.Mode {
+	case NATSAuthModeCompat, NATSAuthModeStrict:
+	case NATSAuthModeOff:
+		// Disabling authorization is only defensible when nothing off-box can
+		// reach the port. Refusing this combination is the point of #104.
+		if !isLoopbackHost(c.NATS.Host) {
+			return fmt.Errorf(
+				"invalid nats.auth.mode: %q requires a loopback nats.host (got %q); "+
+					"an unauthenticated NATS port accepts master-data deletes from anyone who can reach it",
+				c.NATS.Auth.Mode, c.NATS.Host)
+		}
+	default:
+		return fmt.Errorf("invalid nats.auth.mode: %q (allowed: compat, strict, off)", c.NATS.Auth.Mode)
 	}
 	if c.Alarm.WindowSeconds <= 0 {
 		return fmt.Errorf("invalid alarm.window_seconds: %d (must be > 0)", c.Alarm.WindowSeconds)
@@ -470,4 +536,37 @@ func parseDiscardPolicy(value string) (nats.DiscardPolicy, error) {
 	default:
 		return nats.DiscardOld, fmt.Errorf("unsupported JetStream discard policy: %s", value)
 	}
+}
+
+// NATSCredentialsFile resolves where the role credentials live.
+// Precedence: EDG_NATS_CREDENTIALS_FILE > nats.auth.credentials_file >
+// <storage.data_dir>/nats-credentials.json.
+func (c CoreConfig) NATSCredentialsFile() string {
+	if v := os.Getenv(EnvNATSCredentialsFile); v != "" {
+		return v
+	}
+	if c.NATS.Auth.CredentialsFile != "" {
+		return c.NATS.Auth.CredentialsFile
+	}
+	dir := c.Storage.DataDir
+	if dir == "" {
+		dir = "."
+	}
+	return filepath.Join(dir, defaultCredentialsFileName)
+}
+
+// isLoopbackHost reports whether a bind address is unreachable from off-box.
+// An empty host is not loopback: nats-server treats it as 0.0.0.0
+// (server/opts.go setBaselineOptions, server/const.go DEFAULT_HOST).
+func isLoopbackHost(host string) bool {
+	switch host {
+	case "localhost", "::1", "[::1]":
+		return true
+	case "":
+		return false
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
