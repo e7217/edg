@@ -81,3 +81,33 @@ asyncio.run(main())
 Events are best-effort notifications. Adapters should request
 `platform.meta.asset.list` during startup, build their local view from that
 response, then subscribe to `platform.meta.*.changed` for incremental updates.
+
+
+## Adapter Runtime Status
+
+`platform.adapter.*` is a separate plane from the metadata events above. It
+carries **volatile runtime state**, not declarations, and is described in full
+in [ADR 0008](adr/0008-adapter-runtime-status.md).
+
+| Subject | Direction | When | May publish |
+| --- | --- | --- | --- |
+| `platform.adapter.status.<adapter_id>` | adapter → core | Start, every heartbeat, on transitions, and at shutdown | `adapter` |
+| `platform.adapter.hello` | core → all | Core start; asks adapters to re-announce | `core` |
+| `platform.adapter.ping.<adapter_id>` | core ↔ adapter | A deadline passed and core is confirming | `core` (adapter replies) |
+| `platform.adapter.changed` | core → subscribers | Only on an actual transition | `core` only |
+| `platform.adapter.list` | request/reply | On demand | any reader |
+
+**Subscribers to `platform.meta.*.changed` do not receive runtime transitions.**
+The two planes are deliberately separate: metadata events are low-frequency
+declarations, while heartbeats would flood a wildcard subscriber.
+
+`platform.adapter.changed` fires only when a watched field actually changes
+(availability, run state, device state, the asset set, capabilities, or a
+per-asset device state or error). A heartbeat that moves only counters is
+silent, so a fleet at steady state generates almost no event traffic regardless
+of heartbeat rate.
+
+Like the metadata events these are plain NATS publishes: a subscriber that was
+disconnected can miss one. Reconcile with `platform.adapter.list` (or
+`GET /api/v1/adapters`) at startup, then follow `changed` incrementally — the
+same pattern this document recommends for asset events.

@@ -115,3 +115,60 @@ Subscribe to `platform.meta.*.changed` to react to asset and relation metadata c
 Events are best-effort plain NATS messages. On adapter startup, first request the current asset list through `platform.meta.asset.list`, then apply `platform.meta.asset.changed` and `platform.meta.relation.changed` events for incremental updates.
 
 See [Metadata Events](events.md) for the payload schema and examples.
+
+
+## Runtime Status
+
+Both SDKs publish adapter runtime status automatically
+([ADR 0008](adr/0008-adapter-runtime-status.md)). An adapter that implements
+only `Collect` reports without any code change — reporting is on by default,
+because an adapter nobody can see is the problem this plane exists to solve.
+
+```go
+sdk.NewAdapter(sdk.AdapterConfig{
+    AssetID:           "sensor-001",
+    AdapterID:         "modbus-line3",      // optional; defaults to AssetID
+    AdapterVersion:    "modbus-tcp/1.2.0",  // optional, shown in the UI
+    HeartbeatInterval: 10 * time.Second,    // optional, defaults to 10s
+}, collector)
+```
+
+```python
+BaseAdapter(
+    asset_id="sensor-001",
+    adapter_id="modbus-line3",
+    adapter_version="modbus-tcp/1.2.0",
+    heartbeat_interval=10.0,
+)
+```
+
+**`adapter_id` must be a single NATS subject token** — letters, digits, `_`,
+`-`, `:`, at most 64 characters, no dots. It is the last token of the status
+subject and is authoritative for identity, so a frame that claims a different id
+in its body is rejected.
+
+**The heartbeat interval is yours to choose.** It is announced in band and core
+derives its staleness deadline from it (three times the interval, with a floor),
+so a 15-minute batch collector is not declared dead for being quiet.
+
+Three things are reported independently:
+
+| | Meaning |
+| --- | --- |
+| `run_state` | The adapter process: `running`, or `degraded` after three consecutive collect failures |
+| `device_state` | The link to the equipment, using the SDK's existing states |
+| `availability` | Whether core can still hear you. **Derived by core; adapters cannot assert it.** |
+
+`degraded` with `device_state: connected` is a real and common combination: a
+PLC that answers but returns garbage.
+
+**Answer the probe.** When a deadline passes, core sends a request to
+`platform.adapter.ping.<adapter_id>` before declaring you stale. Both SDKs reply
+automatically; an adapter talking to NATS directly should do the same, or it
+will be reported stale after every missed heartbeat.
+
+`host` and `pid` are opt-in (`ReportHost` / `report_host=True`): adapter
+inventory is more sensitive than the asset list.
+
+Set `DisableStatusReporting` / `disable_status_reporting=True` to opt out
+entirely.

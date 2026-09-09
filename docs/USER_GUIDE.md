@@ -69,6 +69,41 @@ INSTALL_DIR=/custom/path ./install.sh
   templates, and is the default target for the import/export commands below.
 - **Config file**: set `EDG_CORE_CONFIG` or pass `--config` to choose a core YAML file.
 
+### Adapter Runtime Status
+
+Core tracks which adapters are alive and what they are collecting
+([ADR 0008](adr/0008-adapter-runtime-status.md)).
+
+```yaml
+adapters:
+  enabled: true
+  stale_after_floor: 15s      # minimum deadline, so a fast poller is not
+                              # declared stale by a momentary hiccup
+  min_interval: 1s            # clamps the interval an adapter announces
+  max_interval: 5m
+  forget_after: 24h           # drop an adapter that has been stale this long
+  probe_on_miss: true         # actively ping before declaring stale
+  probe_timeout: 2s
+  max_concurrent_probes: 32   # a partition expires the whole fleet at once
+```
+
+An adapter is `online` while frames keep arriving, `stale` once its deadline
+passes and a probe goes unanswered, and `offline` when it said goodbye cleanly.
+The deadline is three times the interval the adapter itself announces, so a slow
+batch collector is not declared dead for being quiet.
+
+Inspect it with `GET /api/v1/adapters`, `GET /api/v1/adapters/drift`, or the
+Adapters section of the operator UI. Right after a core restart the list is
+marked `warming` — an empty list then means "not heard from yet", not
+"everything is dead".
+
+**Runtime state is not persisted.** It is volatile by definition, and a stored
+"connected" would be a lie after a restart. Core re-learns it by broadcasting
+`platform.adapter.hello`, to which adapters respond immediately.
+
+Setting `adapters.enabled: false` removes the routes entirely (404) rather than
+serving an empty list.
+
 ### NATS Authorization
 
 The embedded NATS server enforces a role-based subject matrix
@@ -488,6 +523,9 @@ localhost unless a token is configured.
   (`nats.http_host`). It serves `/varz`, `/connz` and `/debug/vars` with no
   authentication of any kind, so exposing it publicly leaks the subject
   topology. See [ADR 0007](adr/0007-nats-subject-authorization.md).
+- **Adapter status**: `GET /api/v1/adapters` and `/api/v1/adapters/drift`, or
+  the operator UI. Drift reports two adapters collecting the same asset, and
+  adapter clocks more than a minute off core's.
 - **VictoriaMetrics UI (vmui)**: http://localhost:8428/vmui — query data and
   explore label cardinality without any extra service.
 - **Grafana** (optional, `docker compose --profile grafana up`): http://localhost:3000

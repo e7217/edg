@@ -66,3 +66,10 @@ sink:
 logging:
   level: warn
   format: json
+
+# Adapter runtime status (ADR 0008). Runtime state is in memory only; core
+# re-learns it after a restart by broadcasting platform.adapter.hello.
+adapters:
+  enabled: true
+  stale_after_floor: 15s
+  probe_on_miss: true

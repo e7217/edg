@@ -18,6 +18,7 @@
 
 *   **Lightweight & Fast**: Single Go binary, embedded NATS, SQLite metadata. No external services required to run a node.
 *   **Explicit Reliability Boundary**: At-least-once delivery starts at the JetStream publish ack — operators know exactly where adapter retry or buffering is still needed. See [ADR 0001](docs/adr/0001-data-plane-reliability.md).
+*   **Adapter Visibility**: Adapters report runtime status automatically, so operators can see which are online, stale or degraded — and whether two are collecting the same asset. See [ADR 0008](docs/adr/0008-adapter-runtime-status.md).
 *   **Role-Based Authorization**: The NATS subject contract is enforced, not just documented. Adapters publish telemetry and read master data but cannot mutate it; only core can publish `platform.data.validated`. See [ADR 0007](docs/adr/0007-nats-subject-authorization.md).
 *   **Semantic Asset Model**: First-class asset relations (`partOf`, `connectedTo`, `locatedIn`) and external identifiers (`irdi`, `eclass`, `aas`, `opcua_node_id`) — a foundation for digital twin work, not just point collection.
 *   **Wire-Contract First**: The integration contract is a small set of NATS subjects, not an SDK. Any language with a NATS client can publish data and subscribe to metadata events — Python and Go SDKs are conveniences for the common cases.
