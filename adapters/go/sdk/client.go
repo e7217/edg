@@ -373,3 +373,20 @@ func requestContext(ctx context.Context, d time.Duration) (context.Context, cont
 	}
 	return context.WithTimeout(ctx, d)
 }
+
+// PublishRaw publishes pre-encoded bytes to a subject. It exists for the
+// adapter status plane, whose frames the SDK builds itself; ordinary callers
+// should use the typed helpers.
+func (c *Client) PublishRaw(ctx context.Context, subject string, payload []byte) error {
+	nc, err := c.conn()
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", ErrPublish, err)
+	}
+	if err := nc.Publish(subject, payload); err != nil {
+		return fmt.Errorf("%w: %w", ErrPublish, err)
+	}
+	return nil
+}

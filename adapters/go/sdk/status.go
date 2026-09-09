@@ -1,0 +1,290 @@
+package sdk
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/nats-io/nats.go"
+)
+
+// SDKVersion is reported in the status frame so an operator can tell which
+// adapters still run an old SDK.
+const SDKVersion = "go/0.6.0"
+
+// Status reporting defaults.
+const (
+	DefaultHeartbeatInterval = 10 * time.Second
+	// degradedAfterErrors is when consecutive collect failures stop being
+	// noise. Deliberately independent of the device link: a PLC that answers
+	// but returns garbage leaves the connection state "connected".
+	degradedAfterErrors = 3
+	// maxReportedAssets bounds the per-asset detail. A gateway fronting
+	// hundreds of assets would otherwise send a 10 KB frame every heartbeat;
+	// the rolled-up device_counts still convey the shape.
+	maxReportedAssets = 50
+)
+
+// statusReporter publishes adapter runtime status (ADR 0008).
+//
+// Counters are atomics updated from the collect loop, and the frame is
+// assembled by the reporter's own goroutine, so no hook on the hot path does
+// more than an atomic add or a non-blocking signal.
+type statusReporter struct {
+	client *Client
+	cfg    *AdapterConfig
+
+	adapterID  string
+	instanceID string
+	startedAt  time.Time
+	interval   time.Duration
+
+	seq                      atomic.Int64
+	publishedTotal           atomic.Int64
+	collectErrorsTotal       atomic.Int64
+	deviceErrorsTotal        atomic.Int64
+	deviceReconnectsTotal    atomic.Int64
+	consecutiveCollectErrors atomic.Int64
+
+	mu          sync.Mutex
+	deviceState DeviceState
+	lastError   string
+	lastErrorAt *time.Time
+
+	// dirty carries edge-triggered sends. Buffered by one: a burst of
+	// transitions between ticks collapses into a single frame rather than
+	// queueing, and a full channel is dropped rather than blocking the caller.
+	dirty chan struct{}
+
+	stopOnce sync.Once
+	stop     chan struct{}
+	done     chan struct{}
+}
+
+func newStatusReporter(client *Client, cfg *AdapterConfig) *statusReporter {
+	interval := cfg.HeartbeatInterval
+	if interval <= 0 {
+		interval = DefaultHeartbeatInterval
+	}
+	adapterID := cfg.AdapterID
+	if adapterID == "" {
+		// A one-adapter-per-asset deployment needs no new configuration.
+		adapterID = cfg.AssetID
+	}
+	return &statusReporter{
+		client:      client,
+		cfg:         cfg,
+		adapterID:   adapterID,
+		instanceID:  newInstanceID(),
+		startedAt:   time.Now(),
+		interval:    interval,
+		deviceState: DeviceDisconnected,
+		dirty:       make(chan struct{}, 1),
+		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
+	}
+}
+
+// newInstanceID identifies this process run, so core can tell a restart from a
+// continuing process and detect two adapters sharing an id.
+func newInstanceID() string {
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(buf)
+}
+
+// start begins heartbeating and answering hello/ping.
+func (r *statusReporter) start(ctx context.Context) {
+	if err := r.subscribeControl(); err != nil {
+		r.cfg.Logger.Warn("adapter status control subscriptions failed", "err", err)
+	}
+	r.publish(ctx, AdapterPhaseOnline)
+	go r.loop(ctx)
+}
+
+func (r *statusReporter) subscribeControl() error {
+	nc, err := r.client.conn()
+	if err != nil {
+		return err
+	}
+	// hello: core restarted and wants everyone to re-announce.
+	if _, err := nc.Subscribe(SubjectAdapterHello, func(_ *nats.Msg) {
+		r.publish(context.Background(), AdapterPhaseAnnounce)
+	}); err != nil {
+		return err
+	}
+	// ping: core missed a heartbeat and is checking before declaring us dead.
+	if _, err := nc.Subscribe(SubjectAdapterPingPrefix+r.adapterID, func(msg *nats.Msg) {
+		_ = msg.Respond([]byte(`{"ok":true}`))
+	}); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *statusReporter) loop(ctx context.Context) {
+	defer close(r.done)
+
+	ticker := time.NewTicker(r.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-r.stop:
+			return
+		case <-ticker.C:
+			r.publish(ctx, AdapterPhaseHeartbeat)
+		case <-r.dirty:
+			// Edge-triggered: a state change is reported immediately rather
+			// than waiting up to a whole interval.
+			r.publish(ctx, AdapterPhaseHeartbeat)
+		}
+	}
+}
+
+// markDirty requests an out-of-band frame. Non-blocking, so it is safe to call
+// from the collect loop and from state transitions.
+func (r *statusReporter) markDirty() {
+	select {
+	case r.dirty <- struct{}{}:
+	default:
+	}
+}
+
+// setDeviceState records a transition. Called after the adapter releases its
+// own lock — publishing under that lock would put network I/O inside the state
+// machine.
+func (r *statusReporter) setDeviceState(s DeviceState) {
+	r.mu.Lock()
+	changed := r.deviceState != s
+	r.deviceState = s
+	r.mu.Unlock()
+	if changed {
+		if s == DeviceError || s == DeviceDisconnected {
+			r.deviceErrorsTotal.Add(1)
+		}
+		if s == DeviceReconnecting {
+			r.deviceReconnectsTotal.Add(1)
+		}
+		r.markDirty()
+	}
+}
+
+func (r *statusReporter) incPublished() {
+	r.publishedTotal.Add(1)
+	r.consecutiveCollectErrors.Store(0)
+}
+
+func (r *statusReporter) incCollectError(err error) {
+	r.collectErrorsTotal.Add(1)
+	n := r.consecutiveCollectErrors.Add(1)
+
+	r.mu.Lock()
+	now := time.Now()
+	r.lastError = err.Error()
+	r.lastErrorAt = &now
+	r.mu.Unlock()
+
+	// Report the moment the adapter becomes degraded rather than waiting for
+	// the next tick; that transition is the whole point of the axis.
+	if n == degradedAfterErrors {
+		r.markDirty()
+	}
+}
+
+func (r *statusReporter) runState() RunState {
+	if r.consecutiveCollectErrors.Load() >= degradedAfterErrors {
+		return RunStateDegraded
+	}
+	return RunStateRunning
+}
+
+// frame assembles the current status.
+func (r *statusReporter) frame(phase string) AdapterStatusFrame {
+	r.mu.Lock()
+	deviceState := r.deviceState
+	lastError := r.lastError
+	lastErrorAt := r.lastErrorAt
+	r.mu.Unlock()
+
+	now := time.Now()
+	runState := r.runState()
+	if phase == AdapterPhaseOffline {
+		runState = RunStateStopped
+	}
+
+	counters := AdapterCounters{
+		PublishedTotal:           r.publishedTotal.Load(),
+		CollectErrorsTotal:       r.collectErrorsTotal.Load(),
+		DeviceErrorsTotal:        r.deviceErrorsTotal.Load(),
+		DeviceReconnectsTotal:    r.deviceReconnectsTotal.Load(),
+		ConsecutiveCollectErrors: r.consecutiveCollectErrors.Load(),
+	}
+
+	assets := []AdapterAssetStatus{{
+		AssetID:            r.cfg.AssetID,
+		DeviceState:        string(deviceState),
+		PublishedTotal:     counters.PublishedTotal,
+		CollectErrorsTotal: counters.CollectErrorsTotal,
+		LastError:          lastError,
+		LastErrorAt:        lastErrorAt,
+	}}
+
+	frame := AdapterStatusFrame{
+		SchemaVersion:      AdapterSchemaVersion,
+		AdapterID:          r.adapterID,
+		InstanceID:         r.instanceID,
+		Seq:                r.seq.Add(1),
+		Phase:              phase,
+		RunState:           runState,
+		DeviceState:        string(deviceState),
+		HeartbeatIntervalS: int(r.interval / time.Second),
+		UptimeS:            int64(now.Sub(r.startedAt).Seconds()),
+		StartedAt:          r.startedAt.UTC(),
+		SentAt:             now.UTC(),
+		SDK:                SDKVersion,
+		AdapterVersion:     r.cfg.AdapterVersion,
+		Capabilities:       []string{"ping"},
+		Assets:             assets,
+		DeviceCounts:       map[string]int{string(deviceState): 1},
+		Counters:           counters,
+	}
+	if r.cfg.ReportHost {
+		frame.Host, _ = os.Hostname()
+		frame.PID = os.Getpid()
+	}
+	return frame
+}
+
+func (r *statusReporter) publish(ctx context.Context, phase string) {
+	raw, err := json.Marshal(r.frame(phase))
+	if err != nil {
+		r.cfg.Logger.Warn("encode adapter status", "err", err)
+		return
+	}
+	if err := r.client.PublishRaw(ctx, SubjectAdapterStatusPrefix+r.adapterID, raw); err != nil {
+		// Status is best-effort by design: failing to report must never take
+		// down an adapter that is otherwise collecting fine.
+		r.cfg.Logger.Debug("publish adapter status", "err", err)
+	}
+}
+
+// stopWith sends a final frame and halts. Called from a deferred function
+// registered after the client's own close defer, so LIFO ordering guarantees
+// the connection is still open here.
+func (r *statusReporter) stopWith(ctx context.Context) {
+	r.stopOnce.Do(func() {
+		close(r.stop)
+		<-r.done
+		r.publish(ctx, AdapterPhaseOffline)
+	})
+}

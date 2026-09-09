@@ -58,6 +58,29 @@ type AdapterConfig struct {
 
 	// Logger is used for adapter-level logging. Zero value uses slog.Default().
 	Logger *slog.Logger
+
+	// AdapterID identifies this adapter process on the runtime-status plane
+	// (ADR 0008). It must be a single NATS subject token. Empty falls back to
+	// AssetID, so a one-adapter-per-asset deployment needs no new config.
+	AdapterID string
+
+	// AdapterVersion is reported in status frames, e.g. "modbus-tcp/1.2.0".
+	AdapterVersion string
+
+	// HeartbeatInterval between status frames. Zero uses 10s. The value is
+	// announced in band and core derives its staleness deadline from it, so a
+	// slow batch collector is not declared dead for being quiet.
+	HeartbeatInterval time.Duration
+
+	// DisableStatusReporting turns off runtime-status publishing entirely.
+	// Reporting is on by default: an adapter nobody can see is the problem
+	// this plane exists to solve.
+	DisableStatusReporting bool
+
+	// ReportHost includes the hostname and PID in status frames. Off by
+	// default because that inventory is more sensitive than the asset list and
+	// the plane carries no authorization of its own.
+	ReportHost bool
 }
 
 func (c *AdapterConfig) applyDefaults() {
@@ -88,6 +111,10 @@ type Adapter struct {
 
 	mu    sync.RWMutex
 	state DeviceState
+
+	// reporter is nil when status reporting is disabled. It is created in Run
+	// once the NATS connection exists, so it is only read after that point.
+	reporter *statusReporter
 }
 
 // NewAdapter returns an Adapter for the given Collector. If c also
@@ -126,6 +153,13 @@ func (a *Adapter) setState(s DeviceState) {
 	a.mu.Lock()
 	a.state = s
 	a.mu.Unlock()
+
+	// Reported after the lock is released: publishing under it would put
+	// network I/O inside the device state machine. setState is the single
+	// transition point, so hooking here covers every path.
+	if a.reporter != nil {
+		a.reporter.setDeviceState(s)
+	}
 }
 
 // Run connects to NATS, then runs the collect loop until ctx is cancelled.
@@ -153,6 +187,14 @@ func (a *Adapter) Run(ctx context.Context) error {
 			}
 		}
 	}()
+
+	if !a.cfg.DisableStatusReporting {
+		a.reporter = newStatusReporter(a.client, &a.cfg)
+		a.reporter.start(ctx)
+		// Registered after the client-close defer, so LIFO ordering runs this
+		// first and the goodbye frame goes out while the connection is open.
+		defer a.reporter.stopWith(context.WithoutCancel(ctx))
+	}
 
 	connected, err := a.ensureDeviceConnected(ctx, false)
 	if err != nil {
@@ -196,6 +238,9 @@ func (a *Adapter) tick(ctx context.Context) error {
 	}
 	values, err := a.collector.Collect(ctx)
 	if err != nil {
+		if a.reporter != nil {
+			a.reporter.incCollectError(err)
+		}
 		if isDeviceError(err) {
 			a.handleDeviceError(ctx, err)
 		}
@@ -211,6 +256,9 @@ func (a *Adapter) tick(ctx context.Context) error {
 	}
 	if err := a.client.PublishAssetData(ctx, data); err != nil {
 		return err
+	}
+	if a.reporter != nil {
+		a.reporter.incPublished()
 	}
 	a.cfg.Logger.Debug("published", "asset_id", a.cfg.AssetID, "tags", len(values))
 	return nil

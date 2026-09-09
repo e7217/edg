@@ -72,3 +72,28 @@ func TestServerWebUI(t *testing.T) {
 	status, _ := getJSON(t, on.URL+"/api/v1/health", "")
 	assert.Equal(t, http.StatusOK, status)
 }
+
+// TestWebUIIncludesAdapterSections guards the wiring between the embedded UI
+// and the adapter routes: the page must actually request them, and it must
+// render the heartbeat age relative to the adapter's declared interval rather
+// than as an absolute time the browser's clock cannot be trusted to compute.
+func TestWebUIIncludesAdapterSections(t *testing.T) {
+	store := newHTTPTestStore(t)
+	srv := httptest.NewServer(newHTTPTestServer(store, Options{WebUIEnabled: true}).Handler())
+	t.Cleanup(srv.Close)
+
+	res, err := http.Get(srv.URL + "/")
+	require.NoError(t, err)
+	defer func() { _ = res.Body.Close() }()
+	body, err := io.ReadAll(res.Body)
+	require.NoError(t, err)
+	page := string(body)
+
+	assert.Contains(t, page, `id="adapters"`)
+	assert.Contains(t, page, `id="drift"`)
+	assert.Contains(t, page, `api("GET", "/adapters")`)
+	assert.Contains(t, page, `api("GET", "/adapters/drift")`)
+	assert.Contains(t, page, "loadAdapters()", "the sections must be in the refresh cycle")
+	assert.Contains(t, page, "x interval", "heartbeat age must be relative, not absolute")
+	assert.Contains(t, page, "warming", "an empty list right after a restart must not read as total failure")
+}

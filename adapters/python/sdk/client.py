@@ -139,6 +139,12 @@ class NATSClientWrapper:
             raise
 
     @property
+    def nc(self) -> NATSClient | None:
+        """The underlying NATS connection, for callers that need to publish or
+        subscribe outside the typed helpers (the status reporter does)."""
+        return self._nc
+
+    @property
     def is_connected(self) -> bool:
         """Check connection status"""
         return self._nc is not None and self._nc.is_connected

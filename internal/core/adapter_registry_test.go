@@ -666,3 +666,61 @@ func TestScanIntervalIndependentOfMaxInterval(t *testing.T) {
 	})
 	assert.Equal(t, time.Second, reg.scanInterval())
 }
+
+func TestDriftDetectsMultiAdapter(t *testing.T) {
+	reg, clock, _ := newTestRegistry(t)
+	reg.Observe(heartbeat("modbus-1", "i1", 1), "modbus-1", clock.Now())
+	reg.Observe(heartbeat("modbus-2", "i2", 1), "modbus-2", clock.Now())
+
+	report := reg.Drift()
+	require.Equal(t, 1, report.IssueCount)
+	assert.Equal(t, DriftMultiAdapter, report.Issues[0].Kind)
+	assert.Equal(t, "press-01", report.Issues[0].Subject)
+	assert.Equal(t, []string{"modbus-1", "modbus-2"}, report.Issues[0].Adapters)
+}
+
+func TestDriftDetectsClockSkew(t *testing.T) {
+	reg, clock, _ := newTestRegistry(t)
+
+	f := heartbeat("modbus-1", "i1", 1)
+	f.SentAt = clock.Now().Add(2 * time.Hour)
+	reg.Observe(f, "modbus-1", clock.Now())
+
+	report := reg.Drift()
+	require.Equal(t, 1, report.IssueCount)
+	assert.Equal(t, DriftClockSkew, report.Issues[0].Kind)
+	assert.Equal(t, "modbus-1", report.Issues[0].Subject)
+}
+
+func TestDriftIgnoresSmallSkew(t *testing.T) {
+	reg, clock, _ := newTestRegistry(t)
+
+	f := heartbeat("modbus-1", "i1", 1)
+	f.SentAt = clock.Now().Add(5 * time.Second)
+	reg.Observe(f, "modbus-1", clock.Now())
+
+	assert.Zero(t, reg.Drift().IssueCount, "ordinary NTP jitter must not be reported")
+}
+
+// TestDriftDoesNotReportUnservedAssets documents a deliberate omission: the
+// registry cannot distinguish a sensor that lost its collector from a line or
+// factory node that was never meant to have one, and flagging every logical
+// grouping asset would bury the real signals.
+func TestDriftDoesNotReportUnservedAssets(t *testing.T) {
+	reg, clock, _ := newTestRegistry(t)
+	reg.Observe(heartbeat("modbus-1", "i1", 1), "modbus-1", clock.Now())
+
+	report := reg.Drift()
+	for _, issue := range report.Issues {
+		assert.NotEqual(t, "asset_unserved", issue.Kind)
+	}
+}
+
+func TestDriftIsEmptyForHealthyFleet(t *testing.T) {
+	reg, clock, _ := newTestRegistry(t)
+	reg.Observe(heartbeat("modbus-1", "i1", 1), "modbus-1", clock.Now())
+
+	report := reg.Drift()
+	assert.Zero(t, report.IssueCount)
+	assert.NotNil(t, report.Issues, "must serialize as [] not null")
+}

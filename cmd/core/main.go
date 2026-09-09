@@ -281,6 +281,7 @@ func main() {
 
 	if cfg.HTTP.Enabled {
 		httpServer := httpapi.NewServer(store, metaService, httpapi.Options{
+			Adapters:           adapterRegistry,
 			Address:            cfg.HTTP.Address,
 			TokenEnv:           cfg.HTTP.TokenEnv,
 			CORSAllowedOrigins: cfg.HTTP.CORSAllowedOrigins,

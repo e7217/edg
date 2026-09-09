@@ -599,3 +599,89 @@ func (r *AdapterRegistry) forget(id string, now time.Time) []AdapterChangeEvent 
 		Timestamp: now, Adapter: &clone,
 	}}
 }
+
+// AdapterDriftIssue is one discrepancy between what the registry observes and
+// what a healthy deployment would look like.
+type AdapterDriftIssue struct {
+	Kind     string   `json:"kind"`
+	Severity string   `json:"severity"`
+	Subject  string   `json:"subject"`
+	Detail   string   `json:"detail"`
+	Adapters []string `json:"adapters,omitempty"`
+}
+
+// Drift issue kinds.
+const (
+	// DriftMultiAdapter: two adapters claim the same asset. Both are polling
+	// the same equipment and both are writing, which shows up downstream as
+	// duplicate or conflicting series.
+	DriftMultiAdapter = "multi_adapter"
+	// DriftClockSkew: the adapter's clock disagrees with the core's. Harmless
+	// for expiry (which never reads adapter time) but it makes any timestamp
+	// the adapter puts on telemetry suspect.
+	DriftClockSkew = "clock_skew"
+)
+
+// driftClockSkewThreshold is when skew stops being noise. Telemetry timestamps
+// come from the adapter (see the SDK's PublishAssetData), so a minute of skew
+// is enough to misorder data in VictoriaMetrics.
+const driftClockSkewThreshold = 60.0
+
+// AdapterDriftReport mirrors the shape of ConstraintsReport so operators and
+// the UI can treat the two the same way.
+type AdapterDriftReport struct {
+	IssueCount int                 `json:"issue_count"`
+	Issues     []AdapterDriftIssue `json:"issues"`
+	CheckedAt  time.Time           `json:"checked_at"`
+}
+
+// Drift reports discrepancies derivable from runtime observation alone.
+//
+// It deliberately does not report "declared asset with no adapter": the
+// registry cannot tell a sensor that lost its collector from a line or factory
+// node that was never meant to have one, and flagging every logical grouping
+// asset would bury the real signals. That check needs the declaration layer to
+// know which assets are supposed to be collected.
+func (r *AdapterRegistry) Drift() AdapterDriftReport {
+	now := r.opts.Clock.Now()
+	report := AdapterDriftReport{Issues: []AdapterDriftIssue{}, CheckedAt: now}
+
+	r.mu.RLock()
+	for assetID, owners := range r.byAsset {
+		if len(owners) < 2 {
+			continue
+		}
+		ids := make([]string, 0, len(owners))
+		for id := range owners {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		report.Issues = append(report.Issues, AdapterDriftIssue{
+			Kind:     DriftMultiAdapter,
+			Severity: "warning",
+			Subject:  assetID,
+			Detail:   "more than one adapter is collecting this asset",
+			Adapters: ids,
+		})
+	}
+	for id, e := range r.entries {
+		if e.ClockSkewS > driftClockSkewThreshold || e.ClockSkewS < -driftClockSkewThreshold {
+			report.Issues = append(report.Issues, AdapterDriftIssue{
+				Kind:     DriftClockSkew,
+				Severity: "warning",
+				Subject:  id,
+				Detail:   "adapter clock differs from core by more than a minute; telemetry timestamps come from the adapter",
+			})
+		}
+	}
+	r.mu.RUnlock()
+
+	sort.Slice(report.Issues, func(i, j int) bool {
+		if report.Issues[i].Kind != report.Issues[j].Kind {
+			return report.Issues[i].Kind < report.Issues[j].Kind
+		}
+		return report.Issues[i].Subject < report.Issues[j].Subject
+	})
+	report.IssueCount = len(report.Issues)
+	return report
+}

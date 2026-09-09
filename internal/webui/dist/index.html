@@ -58,6 +58,14 @@
     <table><thead><tr><th>Name</th><th>Resources</th><th>Constraints</th></tr></thead><tbody id="templates"></tbody></table>
   </section>
   <section>
+    <h2>Adapters</h2>
+    <table><thead><tr><th>Adapter</th><th>Assets</th><th>Availability</th><th>Run</th><th>Device</th><th>Rate</th><th>Last HB</th><th>Version</th></tr></thead><tbody id="adapters"></tbody></table>
+  </section>
+  <section>
+    <h2>Adapter Drift</h2>
+    <table><thead><tr><th>Kind</th><th>Subject</th><th>Detail</th></tr></thead><tbody id="drift"></tbody></table>
+  </section>
+  <section>
     <h2>Constraint Violations</h2>
     <table><thead><tr><th>Asset</th><th>Type</th><th>Message</th></tr></thead><tbody id="violations"></tbody></table>
   </section>
@@ -128,10 +136,90 @@ async function loadViolations() {
   }
 }
 
+async function loadAdapters() {
+  const tb = $("adapters"); tb.innerHTML = "";
+  let snap;
+  try {
+    snap = await api("GET", "/adapters");
+  } catch (e) {
+    // adapters.enabled=false returns 404; that is "not tracked here", not an error.
+    tb.appendChild(rowMessage(8, "adapter tracking is disabled"));
+    return;
+  }
+  const list = (snap && snap.adapters) || [];
+  if (!list.length) {
+    tb.appendChild(rowMessage(8, snap && snap.warming
+      ? "waiting for the first heartbeats…"   // right after a core restart an empty list proves nothing
+      : "no adapters have reported"));
+    return;
+  }
+  for (const a of list) {
+    const tr = document.createElement("tr");
+    const pill = document.createElement("span");
+    pill.className = "pill";
+    pill.textContent = a.availability;
+    const avail = document.createElement("td");
+    avail.appendChild(pill);
+    tr.append(
+      cell(a.adapter_id),
+      cell((a.asset_ids || []).join(", ")),
+      avail,
+      cell(a.run_state || ""),
+      cell(a.device_state || ""),
+      cell(a.observed_publish_hz ? a.observed_publish_hz.toFixed(2) + "/s" : ""),
+      cell(heartbeatAge(a)),
+      cell(a.adapter_version || a.sdk || ""),
+    );
+    tb.appendChild(tr);
+  }
+}
+
+// heartbeatAge renders elapsed time as a fraction of the adapter's own declared
+// interval rather than absolute seconds: the browser's clock is unrelated to
+// the core's, so an absolute age would be wrong by whatever the two disagree by.
+function heartbeatAge(a) {
+  if (!a.last_seen_at || !a.heartbeat_interval_s) return "";
+  const elapsed = (Date.now() - Date.parse(a.last_seen_at)) / 1000;
+  const ratio = elapsed / a.heartbeat_interval_s;
+  if (!isFinite(ratio) || ratio < 0) return "";
+  return ratio.toFixed(1) + "x interval";
+}
+
+async function loadDrift() {
+  const tb = $("drift"); tb.innerHTML = "";
+  let report;
+  try {
+    report = await api("GET", "/adapters/drift");
+  } catch (e) {
+    tb.appendChild(rowMessage(3, "adapter tracking is disabled"));
+    return;
+  }
+  const issues = (report && report.issues) || [];
+  if (!issues.length) {
+    tb.appendChild(rowMessage(3, "no drift detected"));
+    return;
+  }
+  for (const i of issues) {
+    const tr = document.createElement("tr");
+    tr.append(cell(i.kind), cell(i.subject), cell(i.detail));
+    tb.appendChild(tr);
+  }
+}
+
+function rowMessage(span, text) {
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = span;
+  td.textContent = text;
+  td.style.opacity = "0.6";
+  tr.appendChild(td);
+  return tr;
+}
+
 async function refresh() {
   setStatus("loading…");
   try {
-    await Promise.all([loadAssets(), loadRelations(), loadTemplates(), loadViolations()]);
+    await Promise.all([loadAssets(), loadRelations(), loadTemplates(), loadViolations(), loadAdapters(), loadDrift()]);
     setStatus("updated " + new Date().toLocaleTimeString());
   } catch (e) { setStatus(e.message, true); }
 }
