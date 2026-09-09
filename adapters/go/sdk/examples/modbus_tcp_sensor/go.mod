@@ -1,6 +1,6 @@
 module github.com/e7217/edg/adapters/go/sdk/examples/modbus_tcp_sensor
 
-go 1.25.4
+go 1.24.0
 
 replace github.com/e7217/edg/adapters/go/sdk => ../..
 
@@ -14,9 +14,9 @@ require (
 require (
 	github.com/goburrow/serial v0.1.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
-	github.com/nats-io/nats.go v1.51.0 // indirect
+	github.com/nats-io/nats.go v1.47.0 // indirect
 	github.com/nats-io/nkeys v0.4.15 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
-	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
+	golang.org/x/sys v0.40.0 // indirect
 )

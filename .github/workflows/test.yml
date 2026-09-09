@@ -2,12 +2,27 @@ name: Test
 
 on:
   push:
-    branches: [feat/*, fix/*]
+    # The repository works on feat/, fix/, docs/, chore/ and security/ branches.
+    # Restricting this list to feat/fix meant other prefixes got no CI until a
+    # PR was opened.
+    branches:
+      - "feat/*"
+      - "fix/*"
+      - "docs/*"
+      - "chore/*"
+      - "security/*"
   pull_request:
     branches: [main]
 
+env:
+  # Single source of truth for the toolchain. Must match the `go` directive in
+  # go.mod, adapters/go/sdk/go.mod and the example module — they are kept in
+  # lockstep so a contributor who can build the core can also build the SDK.
+  GO_VERSION: "1.24.0"
+
 jobs:
   test:
+    name: Core module
     runs-on: ubuntu-latest
 
     steps:
@@ -16,10 +31,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.0'
+          go-version: ${{ env.GO_VERSION }}
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Vet
+        run: go vet ./...
 
       - name: Run tests
         run: go test ./... -v -race -coverprofile=coverage.out
@@ -34,3 +52,82 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: e7217/edg
           fail_ci_if_error: false
+
+  go-sdk:
+    # adapters/go/sdk is a separate module and the repository has no go.work,
+    # so the core job's `go test ./...` never reaches it. Without this job its
+    # tests are dead weight.
+    name: Go SDK module
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Vet
+        working-directory: adapters/go/sdk
+        run: go vet ./...
+
+      - name: Run tests
+        working-directory: adapters/go/sdk
+        run: go test ./... -v -race
+
+      - name: Build reference adapter example
+        # Its own module with a replace directive to ../..; an SDK API change
+        # breaks it independently of the SDK's own tests.
+        working-directory: adapters/go/sdk/examples/modbus_tcp_sensor
+        run: |
+          go build ./...
+          go test ./... -race
+
+  go-version-lockstep:
+    name: Go version lockstep
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert every module declares the CI toolchain version
+        run: |
+          fail=0
+          for mod in go.mod adapters/go/sdk/go.mod adapters/go/sdk/examples/modbus_tcp_sensor/go.mod; do
+            declared=$(awk '/^go /{print $2; exit}' "$mod")
+            if [ "$declared" != "${GO_VERSION}" ]; then
+              echo "::error file=$mod::go directive is $declared, expected ${GO_VERSION} (see .github/workflows/test.yml env.GO_VERSION)"
+              fail=1
+            fi
+          done
+          # release.yml builds the shipped binary; a lower toolchain there than
+          # go.mod requires is a build that cannot succeed.
+          release_go=$(awk -F"'" '/go-version:/{print $2; exit}' .github/workflows/release.yml)
+          if [ "$release_go" != "${GO_VERSION}" ]; then
+            echo "::error file=.github/workflows/release.yml::go-version is $release_go, expected ${GO_VERSION}"
+            fail=1
+          fi
+          exit $fail
+
+  python-sdk:
+    name: Python SDK
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        working-directory: adapters/python
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,examples]"
+
+      - name: Run tests
+        working-directory: adapters/python
+        run: pytest -v

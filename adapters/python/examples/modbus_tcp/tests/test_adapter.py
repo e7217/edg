@@ -36,10 +36,15 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _as_signed(u: int) -> int:
-    """pymodbus's REGISTERS DataType packs values as int16; convert
-    unsigned 16-bit so the wire bytes match the original pattern."""
-    return u - 0x10000 if u > 0x7FFF else u
+def _as_unsigned(v: int) -> int:
+    """A Modbus holding register is an unsigned 16-bit word on the wire.
+
+    pymodbus >= 3.15 packs SimData REGISTERS values with ">H" and rejects
+    negatives, which is correct: signed interpretation is the client's job.
+    The seeds below are already written as raw register patterns (0xFFFF), so
+    this only normalises anything expressed as a negative int16.
+    """
+    return v & 0xFFFF
 
 
 @asynccontextmanager
@@ -50,7 +55,7 @@ async def _modbus_server(port: int, *, register_seed: dict[int, int]):
     size = max(register_seed) + 1 if register_seed else 1
     bank = [0] * size
     for addr, val in register_seed.items():
-        bank[addr] = _as_signed(val)
+        bank[addr] = _as_unsigned(val)
     shared = [SimData(address=0, count=size, values=bank, datatype=DataType.REGISTERS)]
     device = SimDevice(id=1, simdata=shared)
     task = asyncio.create_task(
