@@ -52,6 +52,11 @@ type Client struct {
 
 	mu sync.RWMutex
 	nc *nats.Conn
+
+	// perms records subjects the server refused, so a request waiting on a
+	// reply that will never arrive can name its own cause instead of
+	// surfacing a bare deadline. See permission.go.
+	perms permissionTracker
 }
 
 // NewClient builds a Client. It does not open the connection; call Connect.
@@ -81,8 +86,24 @@ func (c *Client) Connect(ctx context.Context) error {
 		nats.ReconnectWait(c.opts.ReconnectWait),
 		nats.Timeout(c.opts.ConnectTimeout),
 		nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+			if err == nil {
+				return
+			}
+			if op, subject, ok := c.perms.record(err.Error(), time.Now()); ok {
+				// Distinct from a generic nats error: this one tells the
+				// operator exactly which credential is missing which grant.
+				// A denied subscription produces no other symptom at all —
+				// the adapter would otherwise just never receive anything.
+				c.opts.Logger.Error("nats permission denied",
+					"op", op, "subject", subject,
+					"hint", "the credentials in the NATS URL lack this grant; see the role matrix in ADR 0007")
+				return
+			}
 			c.opts.Logger.Error("nats error", "err", err)
 		}),
+		// Without this a subscribe to a denied subject returns nil and the
+		// adapter silently receives nothing forever.
+		nats.PermissionErrOnSubscribe(true),
 		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
 			if err != nil {
 				c.opts.Logger.Warn("nats disconnected", "err", err)
@@ -107,7 +128,7 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("%w: %w", ErrConnection, err)
 	}
 	c.nc = nc
-	c.opts.Logger.Info("nats connected", "url", c.opts.URL)
+	c.opts.Logger.Info("nats connected", "url", redactURL(c.opts.URL))
 	return nil
 }
 
@@ -277,8 +298,16 @@ func (c *Client) SubscribeMetaChanges(handler MetaChangeHandler) (Subscription, 
 		handler(ev)
 	})
 	if err != nil {
+		if isPermissionError(err) {
+			return nil, &ForbiddenError{Subject: SubjectMetaChangedAll, Op: "subscribe"}
+		}
 		return nil, fmt.Errorf("%w: subscribe %s: %w", ErrPublish, SubjectMetaChangedAll, err)
 	}
+
+	// A denied SUB cannot be reported synchronously: nc.Subscribe is
+	// fire-and-forget and the server's -ERR reaches us through nats.go's
+	// asynchronous callback queue, which is not ordered against Flush. The
+	// ErrorHandler logs it with an actionable message instead.
 	return sub, nil
 }
 
@@ -300,6 +329,15 @@ func (c *Client) requestJSON(ctx context.Context, subject string, req any, out a
 	defer cancel()
 	msg, err := nc.RequestWithContext(reqCtx, subject, payload)
 	if err != nil {
+		// A refused publish is dropped server-side, so the request simply
+		// never gets a reply. Consult the async violation report before
+		// blaming the deadline.
+		if op, refused := c.perms.refused(subject, time.Now()); refused {
+			return &ForbiddenError{Subject: subject, Op: op}
+		}
+		if isPermissionError(err) {
+			return &ForbiddenError{Subject: subject, Op: "publish"}
+		}
 		return fmt.Errorf("%w: request %s: %w", ErrPublish, subject, err)
 	}
 
