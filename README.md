@@ -26,7 +26,7 @@
 
 ## Key Features
 
-*   **Automatic Asset Registration**: Devices appear in the metadata store the first time they publish data — no manual provisioning step.
+*   **Explicit Master Data**: Assets are declared through the HTTP write API, the operator UI, or template import — never as a side effect of a device publishing. Telemetry for an undeclared asset follows `unknown_asset_policy` (`pass_through` or `dead_letter`) and is counted in `edg_core_undeclared_assets`.
 *   **Metadata Change Events**: Asset and relation mutations are published on `platform.meta.*.changed` with `before` / `after` snapshots for reactive adapters and sidecars. See [Metadata Events](docs/events.md).
 *   **Relationship-Aware Enrichment**: Validated data can carry ancestor tags derived from asset relations for line, area, and factory-level queries.
 *   **Edge-Side Data Validation**: Template-driven schema and quality checks applied before data reaches storage.
