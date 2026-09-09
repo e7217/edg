@@ -28,6 +28,10 @@ const (
 	// hundreds of assets would otherwise send a 10 KB frame every heartbeat;
 	// the rolled-up device_counts still convey the shape.
 	maxReportedAssets = 50
+	// offlineFlushTimeout bounds the wait for the goodbye frame to reach the
+	// server. Short: a shutting-down adapter must not hang on an unreachable
+	// broker.
+	offlineFlushTimeout = 2 * time.Second
 )
 
 // statusReporter publishes adapter runtime status (ADR 0008).
@@ -286,5 +290,13 @@ func (r *statusReporter) stopWith(ctx context.Context) {
 		close(r.stop)
 		<-r.done
 		r.publish(ctx, AdapterPhaseOffline)
+		// Publishing is buffered and Client.Close drains asynchronously, so
+		// without an explicit flush the goodbye frame is lost whenever the
+		// process exits promptly after Run returns — which is the normal case.
+		// Core would then report the adapter stale minutes later instead of
+		// knowing at once that it stopped cleanly.
+		if err := r.client.Flush(offlineFlushTimeout); err != nil {
+			r.cfg.Logger.Debug("flush adapter offline frame", "err", err)
+		}
 	})
 }

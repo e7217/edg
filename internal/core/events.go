@@ -49,6 +49,16 @@ const (
 	SubjectAdapterPingPrefix = "platform.adapter.ping."
 	// SubjectAdapterChanged carries transitions only, never every heartbeat.
 	SubjectAdapterChanged = "platform.adapter.changed"
+	// SubjectAdapterPongPrefix is the reply subject a probed adapter answers
+	// on, completed with "<adapter_id>.<nonce>".
+	//
+	// The probe deliberately does not use the default _INBOX: ADR 0007 denies
+	// _INBOX publish to the adapter role so that an adapter cannot race core
+	// to answer somebody else's metadata request. Giving adapters a dedicated
+	// reply namespace keeps that property while still letting them answer a
+	// liveness probe.
+	SubjectAdapterPongPrefix = "platform.adapter.pong."
+	SubjectAdapterPongAll    = "platform.adapter.pong.>"
 	// SubjectAdapterList is a request/reply snapshot, mirroring the
 	// platform.meta.asset.list convention.
 	SubjectAdapterList = "platform.adapter.list"

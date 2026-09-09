@@ -356,3 +356,55 @@ type alwaysFailingCollector struct{ err error }
 func (c *alwaysFailingCollector) Collect(context.Context) ([]TagValue, error) {
 	return nil, c.err
 }
+
+// TestOfflineFrameIsFlushedBeforeReturn is the regression guard for a bug a
+// live smoke test caught but the unit tests missed: publishing is buffered and
+// Client.Close drains asynchronously, so a process that exits promptly after
+// Run returns loses the goodbye frame. Core then reports the adapter stale
+// minutes later instead of knowing at once that it stopped cleanly.
+//
+// Asserting the frame has *already* arrived when Run returns — with no waiting
+// — is what distinguishes a flushed publish from a buffered one.
+func TestOfflineFrameIsFlushedBeforeReturn(t *testing.T) {
+	url := startTestNATSServer(t)
+	control := connectControl(t, url)
+
+	offline := make(chan AdapterStatusFrame, 4)
+	sub, err := control.Subscribe(SubjectAdapterStatusPrefix+">", func(msg *nats.Msg) {
+		var f AdapterStatusFrame
+		if json.Unmarshal(msg.Data, &f) == nil && f.Phase == AdapterPhaseOffline {
+			select {
+			case offline <- f:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sub.Unsubscribe() })
+	if err := control.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	a := NewAdapter(AdapterConfig{
+		AssetID:         "sensor-1",
+		NATSURL:         url,
+		CollectInterval: 20 * time.Millisecond,
+	}, &fakeCollector{})
+	_ = a.Run(ctx)
+
+	// The server has acknowledged the frame by the time Run returns, so the
+	// only remaining delay is the subscriber's own dispatch.
+	select {
+	case f := <-offline:
+		if f.RunState != RunStateStopped {
+			t.Errorf("run_state = %q, want stopped", f.RunState)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("goodbye frame was not flushed before Run returned")
+	}
+}

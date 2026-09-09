@@ -1,6 +1,8 @@
 package core
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"strings"
@@ -127,8 +129,33 @@ func (h *AdapterHandler) Probe(adapterID string) bool {
 	if nc == nil {
 		return false
 	}
-	_, err := nc.Request(SubjectAdapterPingPrefix+adapterID, []byte("{}"), h.probeTimeout)
-	return err == nil
+	// A dedicated reply subject rather than the default inbox: ADR 0007 denies
+	// _INBOX publish to the adapter role, and relaxing that to let adapters
+	// answer a probe would also let one race core to answer another client's
+	// metadata request.
+	reply := SubjectAdapterPongPrefix + adapterID + "." + probeNonce()
+	sub, err := nc.SubscribeSync(reply)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = sub.Unsubscribe() }()
+	if err := nc.PublishRequest(SubjectAdapterPingPrefix+adapterID, reply, []byte("{}")); err != nil {
+		return false
+	}
+	if _, err := sub.NextMsg(h.probeTimeout); err != nil {
+		return false
+	}
+	return true
+}
+
+// probeNonce keeps a late reply to an earlier probe from satisfying a later
+// one, which would otherwise mask an adapter that has since gone quiet.
+func probeNonce() string {
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		return "0"
+	}
+	return hex.EncodeToString(buf)
 }
 
 func (h *AdapterHandler) handleStatus(msg *nats.Msg) {

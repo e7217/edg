@@ -174,3 +174,80 @@ func TestAdapterCannotUseJetStreamAPI(t *testing.T) {
 	_, err = js.PullSubscribe("platform.data.validated", "adapter-fanout", nats.BindStream(testStream))
 	assert.Error(t, err, "adapter must not create a durable consumer")
 }
+
+// TestAdapterPlaneWorksAgainstLiveServer is the test that would have caught the
+// outage. The static matrix assertions pass whether or not the permissions
+// actually work; only a real server proves it, and only exercising the probe's
+// reply path proves the _INBOX deny did not break it.
+func TestAdapterPlaneWorksAgainstLiveServer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode string
+		user string
+	}{
+		{"adapter role, strict", ModeStrict, RoleAdapter},
+		{"anonymous legacy, compat", ModeCompat, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ns, creds, core := startFanoutServer(t, tc.mode, testStream)
+
+			var opts []nats.Option
+			errs := make(chan error, 16)
+			opts = append(opts, nats.ErrorHandler(func(_ *nats.Conn, _ *nats.Subscription, err error) {
+				select {
+				case errs <- err:
+				default:
+				}
+			}))
+			if tc.user != "" {
+				opts = append(opts, nats.UserInfo(tc.user, creds.Secret(tc.user)))
+			}
+			adapter, err := nats.Connect(ns.ClientURL(), opts...)
+			require.NoError(t, err)
+			defer adapter.Close()
+
+			// Status frames must go through.
+			require.NoError(t, adapter.Publish("platform.adapter.status.modbus-1", []byte(`{}`)))
+			require.NoError(t, adapter.Flush())
+			select {
+			case err := <-errs:
+				t.Fatalf("status publish denied: %v", err)
+			case <-time.After(200 * time.Millisecond):
+			}
+
+			// The probe's reply path must work end to end. Core requests on
+			// platform.adapter.ping.<id> with a pong reply subject; the
+			// adapter answers there rather than on _INBOX, which stays denied.
+			_, err = adapter.Subscribe("platform.adapter.ping.modbus-1", func(msg *nats.Msg) {
+				_ = msg.Respond([]byte(`{"ok":true}`))
+			})
+			require.NoError(t, err)
+			require.NoError(t, adapter.Flush())
+
+			coreConn, err := nats.Connect(ns.ClientURL(), nats.UserInfo(core.Username, core.Secret))
+			require.NoError(t, err)
+			defer coreConn.Close()
+
+			reply := "platform.adapter.pong.modbus-1.nonce"
+			sub, err := coreConn.SubscribeSync(reply)
+			require.NoError(t, err)
+			require.NoError(t, coreConn.PublishRequest("platform.adapter.ping.modbus-1", reply, []byte("{}")))
+			require.NoError(t, coreConn.Flush())
+
+			_, err = sub.NextMsg(2 * time.Second)
+			require.NoError(t, err, "the adapter must be able to answer a liveness probe")
+
+			// The anti-forgery property must survive: _INBOX is still denied.
+			for len(errs) > 0 {
+				<-errs
+			}
+			require.NoError(t, adapter.Publish("_INBOX.someone.else", []byte("{}")))
+			require.NoError(t, adapter.Flush())
+			select {
+			case <-errs:
+			case <-time.After(300 * time.Millisecond):
+				t.Error("_INBOX publish must stay denied; granting the probe reply must not reopen response forgery")
+			}
+		})
+	}
+}

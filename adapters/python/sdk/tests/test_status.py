@@ -176,3 +176,32 @@ class TestDeviceStateTracking:
         r = make_reporter()
         r.set_device_state("reconnecting")
         assert r.counters.device_reconnects_total == 1
+
+
+class TestOfflineFlush:
+    """A live smoke test showed the goodbye frame being lost: publishing is
+    buffered and disconnect() drains asynchronously, so a process that exits
+    promptly loses it and core reports the adapter stale minutes later instead
+    of knowing at once that it stopped cleanly."""
+
+    @pytest.mark.asyncio
+    async def test_stop_flushes_the_goodbye_frame(self):
+        r = make_reporter()
+        await r.start()
+        r.client.nc.publish.reset_mock()
+
+        await r.stop()
+
+        r.client.nc.publish.assert_awaited()
+        subject, payload = r.client.nc.publish.await_args.args
+        assert json.loads(payload)["phase"] == AdapterPhase.OFFLINE.value
+        r.client.nc.flush.assert_awaited(), "the goodbye frame must be flushed, not left buffered"
+
+    @pytest.mark.asyncio
+    async def test_flush_failure_does_not_raise(self):
+        """A shutting-down adapter must not hang or crash on an unreachable
+        broker."""
+        r = make_reporter()
+        await r.start()
+        r.client.nc.flush.side_effect = RuntimeError("broker gone")
+        await r.stop()

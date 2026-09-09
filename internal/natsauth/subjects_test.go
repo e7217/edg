@@ -1,7 +1,10 @@
 package natsauth
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/nats-io/nats-server/v2/server"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -95,4 +98,76 @@ func TestAdapterInboundSubjectIsPublishable(t *testing.T) {
 		"the adapter-to-core hop must stay open or every adapter breaks")
 	assert.True(t, allowed[core.SubjectAlarmRaised],
 		"USER_GUIDE documents adapters raising alarms on this subject")
+}
+
+// TestAdapterPlaneIsGranted is the regression guard for a real outage: the
+// adapter runtime-status plane (ADR 0008) shipped while every role's Allow
+// list omitted it, so under the default compat mode every status frame was a
+// permissions violation and the whole feature was dead on arrival. A non-empty
+// Allow list in nats-server is exclusive, so "we forgot to add it" and "we
+// deliberately denied it" look identical from inside the matrix.
+func TestAdapterPlaneIsGranted(t *testing.T) {
+	adapterMustPublish := []string{
+		core.SubjectAdapterStatusPrefix + "modbus-1",
+		core.SubjectAdapterPongPrefix + "modbus-1.abc123",
+		core.SubjectAdapterList,
+	}
+
+	for _, role := range []string{RoleAdapter, RoleLegacy} {
+		t.Run(role, func(t *testing.T) {
+			perms := Permissions(role, testStream)
+			require.NotNil(t, perms)
+			for _, subject := range adapterMustPublish {
+				assert.True(t, subjectAllowed(perms.Publish, subject),
+					"%s must be able to publish %s or the runtime-status plane is dead", role, subject)
+			}
+		})
+	}
+}
+
+// TestAdapterVerdictSubjectsAreCoreOnly: an adapter must not be able to
+// announce its own availability, and a forged hello would let anyone trigger a
+// fleet-wide announce storm.
+func TestAdapterVerdictSubjectsAreCoreOnly(t *testing.T) {
+	for _, subject := range []string{core.SubjectAdapterChanged, core.SubjectAdapterHello} {
+		inMatrix := false
+		for _, s := range coreOnlyPublish {
+			if s == subject {
+				inMatrix = true
+			}
+		}
+		assert.True(t, inMatrix, "%q must be denied to every role but core", subject)
+	}
+}
+
+// subjectAllowed mirrors nats-server's matching closely enough for these
+// assertions: an explicit entry, or a `>` wildcard whose prefix matches.
+func subjectAllowed(p *server.SubjectPermission, subject string) bool {
+	if p == nil {
+		return true
+	}
+	for _, deny := range p.Deny {
+		if subjectMatches(deny, subject) {
+			return false
+		}
+	}
+	if len(p.Allow) == 0 {
+		return true
+	}
+	for _, allow := range p.Allow {
+		if subjectMatches(allow, subject) {
+			return true
+		}
+	}
+	return false
+}
+
+func subjectMatches(pattern, subject string) bool {
+	if pattern == subject {
+		return true
+	}
+	if strings.HasSuffix(pattern, ">") {
+		return strings.HasPrefix(subject, strings.TrimSuffix(pattern, ">"))
+	}
+	return false
 }
