@@ -343,3 +343,108 @@ func TestJetStreamStreamConfig_NATSConfigRejectsInvalidPolicies(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultCoreConfig_NATSAuth(t *testing.T) {
+	cfg := DefaultCoreConfig()
+
+	// The client port keeps its 0.0.0.0 default: an edge gateway exists to
+	// serve remote adapters and sibling containers.
+	assert.Equal(t, "0.0.0.0", cfg.NATS.Host)
+	// The monitoring port does not: nats-server exposes /varz, /connz and
+	// /debug/vars there with no authentication mechanism of any kind.
+	assert.Equal(t, "127.0.0.1", cfg.NATS.HTTPHost)
+	assert.Equal(t, NATSAuthModeCompat, cfg.NATS.Auth.Mode)
+	assert.Empty(t, cfg.NATS.Auth.CredentialsFile, "resolved from storage.data_dir at load time")
+}
+
+func TestLoadCoreConfig_NATSAuthFromYAML(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "core.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+nats:
+  host: 127.0.0.1
+  http_host: 0.0.0.0
+  auth:
+    mode: strict
+    credentials_file: /etc/edg/creds.json
+`), 0o600))
+
+	cfg, err := LoadCoreConfig(path)
+	require.NoError(t, err)
+
+	assert.Equal(t, "127.0.0.1", cfg.NATS.Host)
+	assert.Equal(t, "0.0.0.0", cfg.NATS.HTTPHost)
+	assert.Equal(t, NATSAuthModeStrict, cfg.NATS.Auth.Mode)
+	assert.Equal(t, "/etc/edg/creds.json", cfg.NATS.Auth.CredentialsFile)
+}
+
+func TestLoadCoreConfig_RejectsInvalidNATSAuthMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "core.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("nats:\n  auth:\n    mode: bogus\n"), 0o600))
+
+	_, err := LoadCoreConfig(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nats.auth.mode")
+	assert.Contains(t, err.Error(), "compat")
+}
+
+// TestLoadCoreConfig_AuthOffRequiresLoopback is the hard gate. Disabling
+// authorization is only defensible when nothing off-box can reach the port;
+// `mode: off` on a routable interface is the exact configuration issue #104
+// exists to make impossible.
+func TestLoadCoreConfig_AuthOffRequiresLoopback(t *testing.T) {
+	tests := []struct {
+		name    string
+		host    string
+		wantErr bool
+	}{
+		{"explicit loopback", "127.0.0.1", false},
+		{"loopback range", "127.0.1.5", false},
+		{"localhost name", "localhost", false},
+		{"ipv6 loopback", "::1", false},
+		{"all interfaces", "0.0.0.0", true},
+		{"routable address", "192.168.1.10", true},
+		{"unset means all interfaces", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "core.yaml")
+			yaml := "nats:\n  auth:\n    mode: off\n"
+			if tt.host != "" {
+				yaml += "  host: " + tt.host + "\n"
+			}
+			require.NoError(t, os.WriteFile(path, []byte(yaml), 0o600))
+
+			_, err := LoadCoreConfig(path)
+			if !tt.wantErr {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "nats.auth.mode")
+			assert.Contains(t, err.Error(), "loopback")
+		})
+	}
+}
+
+func TestCoreConfig_ResolveCredentialsFile(t *testing.T) {
+	cfg := DefaultCoreConfig()
+	cfg.Storage.DataDir = "/var/lib/edg"
+	assert.Equal(t, filepath.Join("/var/lib/edg", "nats-credentials.json"), cfg.NATSCredentialsFile())
+
+	cfg.NATS.Auth.CredentialsFile = "/etc/edg/creds.json"
+	assert.Equal(t, "/etc/edg/creds.json", cfg.NATSCredentialsFile(),
+		"an explicit path must win over the data_dir default")
+}
+
+func TestCoreConfig_CredentialsFileEnvOverride(t *testing.T) {
+	t.Setenv(EnvNATSCredentialsFile, "/run/secrets/edg-nats.json")
+
+	cfg := DefaultCoreConfig()
+	cfg.Storage.DataDir = "/var/lib/edg"
+	assert.Equal(t, "/run/secrets/edg-nats.json", cfg.NATSCredentialsFile(),
+		"container orchestrators inject the path by environment, matching EDG_SINK_URL")
+}

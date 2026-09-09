@@ -6,13 +6,18 @@ state with metadata request subjects when they start.
 
 ## Subjects
 
-| Subject | Entity | When |
-| --- | --- | --- |
-| `platform.meta.asset.changed` | Asset | Asset create, update, delete, and data-plane auto-registration |
-| `platform.meta.relation.changed` | Asset relation | Relation create and delete |
+| Subject | Entity | When | May publish |
+| --- | --- | --- | --- |
+| `platform.meta.asset.changed` | Asset | Asset create, update, delete | `core` only |
+| `platform.meta.relation.changed` | Asset relation | Relation create and delete | `core` only |
 
 These are plain NATS publishes, not JetStream writes. A subscriber that is not
 connected can miss events.
+
+Only edg-core may publish these subjects; every other role is denied
+([ADR 0007](adr/0007-nats-subject-authorization.md)). A forged `changed` event
+would poison the enrichment cache, which subscribes to them. Subscribing is
+open to `core`, `operator`, `adapter` and (in compat mode) `legacy`.
 
 ## Payload
 

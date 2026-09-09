@@ -31,8 +31,10 @@ services:
     container_name: edg-core
     restart: unless-stopped
     ports:
-      - "4222:4222"  # NATS
-      - "8222:8222"  # NATS monitoring
+      - "4222:4222"  # NATS (authorization applies; see ADR 0007)
+      # NATS monitoring (8222) is deliberately not published: it exposes
+      # /varz, /connz and /debug/vars with no authentication of any kind, and
+      # the container healthcheck below reaches it over loopback anyway.
     volumes:
       - edg-data:/opt/edg/data
     environment:
@@ -40,6 +42,10 @@ services:
       - ENV=${ENV:-dev}
       # Built-in VM sink writes validated data straight to VictoriaMetrics.
       - EDG_SINK_URL=http://edg-victoriametrics:8428
+      # Role credentials live on the data volume so they survive recreation.
+      # Read them with:
+      #   docker compose exec edg-core cat /opt/edg/data/nats-credentials.json
+      - EDG_NATS_CREDENTIALS_FILE=/opt/edg/data/nats-credentials.json
     depends_on:
       - edg-victoriametrics
     networks:

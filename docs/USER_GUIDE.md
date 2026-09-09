@@ -69,6 +69,55 @@ INSTALL_DIR=/custom/path ./install.sh
   templates, and is the default target for the import/export commands below.
 - **Config file**: set `EDG_CORE_CONFIG` or pass `--config` to choose a core YAML file.
 
+### NATS Authorization
+
+The embedded NATS server enforces a role-based subject matrix
+([ADR 0007](adr/0007-nats-subject-authorization.md)).
+
+```yaml
+nats:
+  host: 0.0.0.0          # client port
+  http_host: 127.0.0.1   # monitoring port — no auth mechanism, keep on loopback
+  auth:
+    mode: compat         # compat | strict | off
+    credentials_file: "" # empty -> <storage.data_dir>/nats-credentials.json
+```
+
+| Role | May do |
+| --- | --- |
+| `operator` | Everything an administrator needs, including master-data writes |
+| `adapter` | Publish telemetry and alarms; **read** master data, not write it |
+| `fanout` | Attach a durable JetStream consumer to the data stream, nothing else |
+| `legacy` | `compat` mode only: anonymous clients get `adapter` ∪ `fanout` |
+
+**Modes.** `compat` (default) enforces the matrix but still accepts anonymous
+connections as `legacy`, so existing adapters keep working after an upgrade.
+`strict` requires credentials. `off` disables authorization entirely and is
+refused unless `nats.host` is a loopback address.
+
+**Credentials** are generated on first boot into a `0600` JSON file; the boot
+banner prints its path. Clients authenticate by putting them in the URL:
+
+```bash
+nats://adapter:<secret>@localhost:4222
+```
+
+Read a role's secret with:
+
+```bash
+jq -r .adapter /var/lib/edg/data/nats-credentials.json
+```
+
+To keep secrets off disk entirely, set all three of
+`EDG_NATS_OPERATOR_PASSWORD`, `EDG_NATS_ADAPTER_PASSWORD` and
+`EDG_NATS_FANOUT_PASSWORD`; the file is then neither created nor read. Setting
+only some of them is an error rather than a silent fallback.
+
+**Migrating to `strict`.** Roll credentials out to every client first, then flip
+the mode. Anything still publishing to a forbidden subject shows up in the core
+log as `Publish Violation - Subject "..."`, which is the checklist for clients
+that do not use an EDG SDK.
+
 Manage templates as files without running the server:
 
 ```bash
@@ -370,6 +419,13 @@ If the environment variable named by `token_env` contains a value, requests must
 include `Authorization: Bearer <token>`. If the variable is unset, the API is
 anonymous and should remain bound to localhost.
 
+> **Known issue ([#107](https://github.com/e7217/edg/issues/107)).** Configuring
+> an HTTP token currently makes the embedded operator UI unreachable: the auth
+> middleware requires a bearer header on every request including the UI's own
+> HTML, which a browser navigation cannot supply. Until that is fixed, a
+> deployment that sets a token should set `http.webui_enabled: false`. This is
+> independent of the NATS authorization above — that one does not affect the UI.
+
 All responses use the same envelope as NATS metadata replies:
 
 ```json
@@ -428,7 +484,10 @@ localhost unless a token is configured.
 
 ## Monitoring
 
-- **NATS Monitor**: http://localhost:8222
+- **NATS Monitor**: http://localhost:8222 — bound to loopback by default
+  (`nats.http_host`). It serves `/varz`, `/connz` and `/debug/vars` with no
+  authentication of any kind, so exposing it publicly leaks the subject
+  topology. See [ADR 0007](adr/0007-nats-subject-authorization.md).
 - **VictoriaMetrics UI (vmui)**: http://localhost:8428/vmui — query data and
   explore label cardinality without any extra service.
 - **Grafana** (optional, `docker compose --profile grafana up`): http://localhost:3000

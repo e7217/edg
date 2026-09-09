@@ -18,6 +18,7 @@
 
 *   **Lightweight & Fast**: Single Go binary, embedded NATS, SQLite metadata. No external services required to run a node.
 *   **Explicit Reliability Boundary**: At-least-once delivery starts at the JetStream publish ack — operators know exactly where adapter retry or buffering is still needed. See [ADR 0001](docs/adr/0001-data-plane-reliability.md).
+*   **Role-Based Authorization**: The NATS subject contract is enforced, not just documented. Adapters publish telemetry and read master data but cannot mutate it; only core can publish `platform.data.validated`. See [ADR 0007](docs/adr/0007-nats-subject-authorization.md).
 *   **Semantic Asset Model**: First-class asset relations (`partOf`, `connectedTo`, `locatedIn`) and external identifiers (`irdi`, `eclass`, `aas`, `opcua_node_id`) — a foundation for digital twin work, not just point collection.
 *   **Wire-Contract First**: The integration contract is a small set of NATS subjects, not an SDK. Any language with a NATS client can publish data and subscribe to metadata events — Python and Go SDKs are conveniences for the common cases.
 *   **Time-Series Ready**: A built-in durable sink writes validated data straight to VictoriaMetrics (or any InfluxDB line-protocol endpoint) — no separate metrics agent. The validated stream is also available on NATS for any other consumer.
@@ -151,13 +152,13 @@ graph LR
 ### Data Inputs
 *   **[Python SDK](adapters/python/sdk)**: For Python-friendly protocols (Modbus via `pymodbus`, BACnet via `BACpypes`, EtherNet/IP via `pycomm3`, and others).
 *   **[Go SDK](adapters/go/sdk)**: Same surface as the Python SDK. Good fit for Go-native protocol libraries and single-binary deployments.
-*   **Any NATS client**: Adapters can publish to the NATS subjects directly without an EDG SDK. Useful for wrapping vendor C/C++ libraries (e.g. `opendnp3`, `lib60870`) as sidecars, or for niche languages.
+*   **Any NATS client**: Adapters can publish to the NATS subjects directly without an EDG SDK. Useful for wrapping vendor C/C++ libraries (e.g. `opendnp3`, `lib60870`) as sidecars, or for niche languages. Credentials ride in the URL (`nats://adapter:<secret>@host:4222`), so no SDK is needed to authenticate either.
 *   **Standard Protocols**: Modbus TCP — reference adapters in [Python](adapters/python/examples/modbus_tcp) and [Go](adapters/go/sdk/examples/modbus_tcp_sensor). Modbus RTU, MQTT (Planned).
 
 ### Storage & Outputs
 *   **VictoriaMetrics**: High-performance time-series storage (Recommended). Written to by core's built-in sink; query and explore cardinality via its built-in vmui at `:8428/vmui`.
 *   **InfluxDB line protocol**: The sink endpoint is configurable (`sink.url` / `EDG_SINK_URL`), so any InfluxDB-compatible target works.
-*   **NATS**: Raw stream access for other microservices — `platform.data.validated` stays published even when the sink is disabled.
+*   **NATS**: Raw stream access for other microservices — `platform.data.validated` stays published even when the sink is disabled. Attach a durable consumer with the `fanout` role, which is scoped to that stream and nothing else.
 
 ## Roadmap
 

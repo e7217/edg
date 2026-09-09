@@ -11,6 +11,38 @@ EDG ships two SDKs that wrap the NATS subject contract described below:
 
 Both SDKs cover the same surface (asset data publish, asset and relation CRUD, metadata change event subscription, device connect/reconnect hooks) and use the same wire format. Pick whichever fits your toolchain — adapters can also talk to the subjects directly without an SDK.
 
+## Connecting
+
+Credentials go in the NATS URL. Neither SDK has credential parameters, because
+the URL already carries them and the generated secrets are URL-safe:
+
+```
+nats://adapter:<secret>@edg-core:4222
+```
+
+```go
+sdk.NewAdapter(sdk.AdapterConfig{AssetID: "sensor-001", NATSURL: os.Getenv("EDG_NATS_URL")})
+```
+
+```python
+BaseAdapter(asset_id="sensor-001", nats_url=os.environ["EDG_NATS_URL"])
+```
+
+Use the `adapter` role. It may publish `platform.data.asset` and
+`platform.alarm.raised` and **read** master data, but it may not create, update
+or delete assets and relations — master data is declared explicitly through the
+HTTP write API, not as a side effect of data flow. See
+[ADR 0007](adr/0007-nats-subject-authorization.md) for the full matrix.
+
+If a call is refused, both SDKs raise a typed error naming the subject
+(`ErrForbidden` in Go, `ForbiddenError` in Python) instead of letting the
+request time out with no explanation. A denied **subscription** cannot be
+reported synchronously — NATS delivers that refusal asynchronously — so it is
+logged as `nats permission denied` with the subject; if an adapter receives no
+metadata events at all, check the log for that line.
+
+Neither SDK logs the URL verbatim; the password is redacted.
+
 ## Asset Source Values
 
 Set `source` to the system that supplied the asset metadata.

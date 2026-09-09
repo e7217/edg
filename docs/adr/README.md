@@ -10,6 +10,7 @@ operator expectations, or compatibility.
 - [ADR 0003: Relationship-Based Control and Conditional Triggers](0003-relationship-based-control.md)
 - [ADR 0004: Ontology Rule Engine](0004-ontology-rule-engine.md)
 - [ADR 0005: Built-in VictoriaMetrics Sink](0005-embedded-vm-sink.md)
+- [ADR 0007: NATS Subject Authorization](0007-nats-subject-authorization.md)
 
 ## Format
 
