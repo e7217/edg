@@ -53,6 +53,31 @@ type CoreConfig struct {
 	Constraints        ConstraintsConfig `yaml:"constraints"`
 	HTTP               HTTPConfig        `yaml:"http"`
 	Sink               SinkConfig        `yaml:"sink"`
+	Adapters           AdaptersConfig    `yaml:"adapters"`
+}
+
+// AdaptersConfig configures the adapter runtime-status registry (ADR 0008).
+type AdaptersConfig struct {
+	// Enabled runs the registry and its subscriptions.
+	Enabled bool `yaml:"enabled"`
+	// StaleAfterFloor is the minimum deadline, so a 1s poller is not declared
+	// stale by a momentary hiccup. The effective deadline is
+	// max(3 x announced_interval, this).
+	StaleAfterFloor time.Duration `yaml:"stale_after_floor"`
+	// MinInterval and MaxInterval clamp the interval an adapter announces, so
+	// a misconfigured adapter cannot pin the deadline at either extreme.
+	MinInterval time.Duration `yaml:"min_interval"`
+	MaxInterval time.Duration `yaml:"max_interval"`
+	// ForgetAfter drops an adapter that has been stale this long.
+	ForgetAfter time.Duration `yaml:"forget_after"`
+	// ProbeOnMiss actively pings an adapter whose deadline passed, turning a
+	// missed heartbeat into a confirmed verdict instead of a guess.
+	ProbeOnMiss bool `yaml:"probe_on_miss"`
+	// ProbeTimeout bounds each probe.
+	ProbeTimeout time.Duration `yaml:"probe_timeout"`
+	// MaxConcurrentProbes stops a fleet-wide partition from becoming a probe
+	// storm.
+	MaxConcurrentProbes int `yaml:"max_concurrent_probes"`
 }
 
 type NATSConfig struct {
@@ -199,6 +224,16 @@ func DefaultCoreConfig() CoreConfig {
 			Address:  "127.0.0.1:8080",
 			TokenEnv: "EDG_HTTP_TOKEN",
 		},
+		Adapters: AdaptersConfig{
+			Enabled:             true,
+			StaleAfterFloor:     DefaultAdapterStaleFloor,
+			MinInterval:         DefaultAdapterMinInterval,
+			MaxInterval:         DefaultAdapterMaxInterval,
+			ForgetAfter:         DefaultAdapterForgetAfter,
+			ProbeOnMiss:         true,
+			ProbeTimeout:        2 * time.Second,
+			MaxConcurrentProbes: DefaultAdapterMaxProbes,
+		},
 		Sink: SinkConfig{
 			Enabled:        true,
 			URL:            "http://localhost:8428",
@@ -302,6 +337,7 @@ func (c *CoreConfig) applyDefaults() {
 		c.HTTP.TokenEnv = defaults.HTTP.TokenEnv
 	}
 	c.Sink.applyDefaults(defaults.Sink)
+	c.Adapters.applyDefaults(defaults.Adapters)
 	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
 }
 
@@ -359,6 +395,18 @@ func (c CoreConfig) validate() error {
 	}
 	if c.HTTP.Enabled && c.HTTP.Address == "" {
 		return fmt.Errorf("http.address is required when http.enabled is true")
+	}
+	if c.Adapters.Enabled {
+		if c.Adapters.MinInterval <= 0 {
+			return fmt.Errorf("invalid adapters.min_interval: %s (must be > 0)", c.Adapters.MinInterval)
+		}
+		if c.Adapters.MaxInterval < c.Adapters.MinInterval {
+			return fmt.Errorf("invalid adapters.max_interval: %s (must be >= adapters.min_interval %s)",
+				c.Adapters.MaxInterval, c.Adapters.MinInterval)
+		}
+		if c.Adapters.MaxConcurrentProbes <= 0 {
+			return fmt.Errorf("invalid adapters.max_concurrent_probes: %d (must be > 0)", c.Adapters.MaxConcurrentProbes)
+		}
 	}
 	if c.Sink.Enabled {
 		if c.Sink.URL == "" {
@@ -569,4 +617,69 @@ func isLoopbackHost(host string) bool {
 		return ip.IsLoopback()
 	}
 	return false
+}
+
+func (c *AdaptersConfig) applyDefaults(defaults AdaptersConfig) {
+	if c.StaleAfterFloor == 0 {
+		c.StaleAfterFloor = defaults.StaleAfterFloor
+	}
+	if c.MinInterval == 0 {
+		c.MinInterval = defaults.MinInterval
+	}
+	if c.MaxInterval == 0 {
+		c.MaxInterval = defaults.MaxInterval
+	}
+	if c.ForgetAfter == 0 {
+		c.ForgetAfter = defaults.ForgetAfter
+	}
+	if c.ProbeTimeout == 0 {
+		c.ProbeTimeout = defaults.ProbeTimeout
+	}
+	if c.MaxConcurrentProbes == 0 {
+		c.MaxConcurrentProbes = defaults.MaxConcurrentProbes
+	}
+}
+
+// UnmarshalYAML mirrors SinkConfig's: durations arrive as strings, and the
+// boolean keys default to true when omitted rather than to Go's zero value.
+func (c *AdaptersConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Enabled             *bool  `yaml:"enabled"`
+		StaleAfterFloor     string `yaml:"stale_after_floor"`
+		MinInterval         string `yaml:"min_interval"`
+		MaxInterval         string `yaml:"max_interval"`
+		ForgetAfter         string `yaml:"forget_after"`
+		ProbeOnMiss         *bool  `yaml:"probe_on_miss"`
+		ProbeTimeout        string `yaml:"probe_timeout"`
+		MaxConcurrentProbes int    `yaml:"max_concurrent_probes"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+
+	*c = AdaptersConfig{MaxConcurrentProbes: raw.MaxConcurrentProbes}
+	c.Enabled = raw.Enabled == nil || *raw.Enabled
+	c.ProbeOnMiss = raw.ProbeOnMiss == nil || *raw.ProbeOnMiss
+
+	for _, f := range []struct {
+		key string
+		raw string
+		dst *time.Duration
+	}{
+		{"stale_after_floor", raw.StaleAfterFloor, &c.StaleAfterFloor},
+		{"min_interval", raw.MinInterval, &c.MinInterval},
+		{"max_interval", raw.MaxInterval, &c.MaxInterval},
+		{"forget_after", raw.ForgetAfter, &c.ForgetAfter},
+		{"probe_timeout", raw.ProbeTimeout, &c.ProbeTimeout},
+	} {
+		if f.raw == "" {
+			continue
+		}
+		d, err := time.ParseDuration(f.raw)
+		if err != nil {
+			return fmt.Errorf("invalid adapters.%s: %w", f.key, err)
+		}
+		*f.dst = d
+	}
+	return nil
 }
