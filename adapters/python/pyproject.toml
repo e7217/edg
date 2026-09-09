@@ -19,6 +19,13 @@ examples = [
     "pyyaml>=6.0",
 ]
 
+[tool.pytest.ini_options]
+# Without asyncio_mode every async test needs its own @pytest.mark.asyncio and a
+# missing marker silently skips the test body instead of failing.
+asyncio_mode = "auto"
+testpaths = ["sdk/tests", "examples"]
+addopts = "-ra"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
