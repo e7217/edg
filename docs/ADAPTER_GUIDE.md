@@ -142,10 +142,18 @@ BaseAdapter(
 )
 ```
 
-**`adapter_id` must be a single NATS subject token** — letters, digits, `_`,
-`-`, `:`, at most 64 characters, no dots. It is the last token of the status
-subject and is authoritative for identity, so a frame that claims a different id
-in its body is rejected.
+**`adapter_id` must be a single NATS subject token**: letters, digits, `_`, `-`
+and `:`, at most 64 characters, **starting with a letter or digit**, and not one
+of the reserved names `drift`, `list` or `hello` (they collide with sibling
+subjects and HTTP routes). It is the last token of the status subject and is
+authoritative for identity, so a frame claiming a different id in its body is
+rejected.
+
+If you leave it empty it defaults to `asset_id`, which has no such constraint.
+Both SDKs sanitize an invalid id deterministically (invalid characters become
+`-`) and log a warning naming the substitution — an asset called `line3.press`
+reports as `line3-press`. Set `adapter_id` explicitly if you would rather
+choose it yourself.
 
 **The heartbeat interval is yours to choose.** It is announced in band and core
 derives its staleness deadline from it (three times the interval, with a floor),

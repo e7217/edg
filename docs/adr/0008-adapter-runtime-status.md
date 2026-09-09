@@ -74,9 +74,11 @@ answers. A persisted `connected` is, after a restart, simply a lie.
 
 Recovery is therefore by protocol, not by storage: core broadcasts
 `platform.adapter.hello` at boot and adapters re-announce within one round trip.
-`Snapshot` carries a `warming` flag for the first two heartbeat windows so an
+`Snapshot` carries a `warming` flag for `2 × max_interval` after start — ten
+minutes at the default `max_interval: 5m`, not two heartbeat windows — so an
 empty registry immediately after a restart is not misread as "everything is
-dead".
+dead". The window is deliberately generous: it is bounded by the slowest
+adapter the deployment permits, not by the fastest.
 
 The declaration layer — which adapters *should* exist — is a real need and a
 separate one. The wire contract accommodates it without a schema bump:
@@ -89,9 +91,10 @@ separate one. The wire contract accommodates it without a schema bump:
 announces its own interval in band, so a 15-minute batch collector and a
 1-second poller coexist without central configuration.
 
-The frame carries `sent_at`, but it appears in **no branch condition** — only in
-a display-only skew figure. A wrong adapter clock cannot make a live adapter
-look dead. `observed_publish_hz` is likewise differenced over core's receive
+The frame carries `sent_at`, but it never enters an **expiry** decision — only a
+display-only skew figure, which the drift report then thresholds to flag a
+badly wrong clock. A wrong adapter clock therefore cannot make a live adapter
+look dead; it can only make the adapter appear in the drift list. `observed_publish_hz` is likewise differenced over core's receive
 times, so it stays correct when the adapter's clock is hours off.
 
 ### A missed heartbeat is not a death
@@ -118,7 +121,7 @@ event traffic no matter how fast it heartbeats.
 |---|---|
 | **JetStream KV with per-key TTL** | Elegant on paper: the server's own clock expires the lease, `RePublish` mirrors writes back into `platform.*`, and core needs no expiry code at all. Rejected on two counts. The write contract moves off `platform.*` onto `$KV.<bucket>.<key>` plus magic headers and revision bookkeeping, so a plain NATS client can no longer participate — a direct violation of the wire-contract-first constraint. Worse, `kv.Put` is an ordinary publish and `kv.Update` passes no TTL, so a developer reaching for the most natural KV call leaves a dead adapter marked **online forever**, and core has no way to prevent it. A monitoring tool that fails silently in the safe-looking direction is the worst failure grade available. |
 | **SQLite two-layer (declaration + observation)** | See above: the observation half cannot answer the liveness question, and the declaration half is an inventory problem, not a runtime one. Deferred with the wire contract prepared for it. |
-| **Registration handshake (request/reply)** | Core could validate the payload and id at registration time. But registration alone cannot answer "when did it die", so heartbeats and expiry are needed regardless, making this a strict subset. Reduced to a single start-up ping for duplicate-instance fencing, which is the one thing it does uniquely. |
+| **Registration handshake (request/reply)** | Core could validate the payload and id at registration time. But registration alone cannot answer "when did it die", so heartbeats and expiry are needed regardless, making this a strict subset. Dropped entirely. A start-up ping for duplicate-instance fencing was considered and **not implemented**: two adapters sharing an id are already visible as a `replaced` event on every heartbeat, and fencing them properly needs a policy decision (fail open and double-poll, or fail closed and block legitimate restarts) that field data should settle. |
 | **A `servedBy` relation in `asset_relations`** | Reuses existing storage, but `RelationType` is ontology vocabulary (ssn/sosa/schema.org). `enricher.go` turns ancestor `TemplateName` into tag keys, so adapter names would leak into every `AssetData.Metadata`; constraint cardinality and traversal depth would both be polluted. Documented as a non-goal. |
 | **`$SYS.ACCOUNT.*.DISCONNECT`** | Near-instant detection instead of ~30s. Requires the system account, and it reports NATS connections rather than adapter health — an adapter can hold its connection while failing every collect. A worthwhile future addition alongside ADR 0007's accounts, not a replacement. |
 | **Per-entry `time.AfterFunc`** (the `alarm_aggregator.go` idiom) | A thousand adapters expiring together spawn a thousand goroutines, and the expiry clock binds to the runtime timer, which makes clock injection awkward. A single reaper ticker solves both. |
@@ -130,14 +133,20 @@ event traffic no matter how fast it heartbeats.
 - **Upgrading the SDK turns reporting on.** That is the right default for
   observability but it is a behaviour change: adapters begin publishing to a
   new subject. `DisableStatusReporting` opts out.
-- Detection latency is roughly `3 × interval + probe timeout`, plus up to half
-  the reaper scan interval. A live smoke test caught the scan interval being
-  derived from `MaxInterval`, which made a 2s deadline take 150s to notice; it
-  now derives from `StaleAfterFloor`.
+- Detection latency is `max(3 × interval, stale_after_floor)` plus up to one
+  scan interval plus the probe timeout. The scan interval is
+  `clamp(stale_after_floor / 2, 1s, 30s)`. At the defaults (10s interval, 15s
+  floor, 7.5s scan, 2s probe) that is roughly 30-40 seconds. A live smoke test
+  caught the scan interval originally being derived from `MaxInterval`, which
+  made a 2s deadline take 150s to notice.
 - `Clock` is the repository's first time abstraction. It exists because the
   reaper is otherwise untestable without real sleeps; no expiry test sleeps.
-- Per-asset detail is capped, with `device_counts` as the rollup. An adapter
-  fronting hundreds of assets would otherwise send a 10 KB frame per heartbeat.
+- The wire format carries `assets_truncated` and a `device_counts` rollup so a
+  gateway fronting hundreds of assets need not send a 10 KB frame per
+  heartbeat. **The SDKs do not use them yet**: each adapter today reports the
+  single asset it was constructed with, so there is nothing to truncate. The
+  fields exist for the multi-asset adapter that the declaration layer implies,
+  and the registry already round-trips them.
 - ADR 0007's matrix must grant `platform.adapter.*` publish to the adapter role
   and `platform.adapter.ping.>` reply. Until then the plane inherits whatever
   the deployment's mode allows.
@@ -159,9 +168,14 @@ event traffic no matter how fast it heartbeats.
 - **Drift does not report unserved assets.** The registry cannot distinguish a
   sensor that lost its collector from a line or factory node that was never
   meant to have one. That check needs the declaration layer.
-- **Duplicate-id fencing fails open.** If an existing instance is wedged and
-  cannot answer the start-up ping, both processes run and double-poll. Failing
-  closed would block legitimate restarts. Revisit with field data.
+- **Expired adapters beyond `max_concurrent_probes` are not probed.** They are
+  marked stale on the deadline alone, so during a fleet-wide partition the
+  verdict for most adapters is a guess rather than a confirmation. The counter
+  `edg_core_adapter_probes_skipped` records how often this happened.
+- **Duplicate-id fencing is not implemented.** Two adapters sharing an id are visible as a
+  `replaced` event on every heartbeat but nothing stops them, so both keep
+  polling the same equipment. Fencing needs a fail-open vs fail-closed policy
+  decision; field data should settle it.
 
 ## Validation
 
@@ -180,11 +194,22 @@ event traffic no matter how fast it heartbeats.
   impersonation rejection, malformed and invalid frames, change events reaching
   subscribers, the list envelope, hello-driven re-announce, and a real
   request/reply probe recovering then failing.
-- SDK tests in both languages: a Collect-only adapter reporting unchanged,
+- Go SDK tests over embedded NATS: a Collect-only adapter reporting unchanged,
   opt-out, edge-triggered transitions, degraded-while-connected, the goodbye
-  frame arriving before disconnect, hello and ping responses, and host/pid
-  staying opt-in.
-- A shared golden fixture parsed by both SDK suites.
+  frame flushed before `Run` returns, a stopped adapter no longer answering
+  probes, hello and ping responses, host/pid staying opt-in, and adapter_id
+  sanitization.
+- Python SDK tests against a mocked client (the suite does not start a broker):
+  frame contents and key parity with the fixture, run-state derivation,
+  publish/flush behaviour on stop, device-state counting, shutdown paths
+  including the signal handler, and the same sanitization table as Go.
+- A golden fixture parsed by both SDK suites. It is physically **two copies**
+  (`adapters/go/sdk/testdata/` and `adapters/python/sdk/tests/`) because the
+  modules ship independently; the Python suite asserts its own frame carries
+  every key the fixture has, which is the direction that catches a Go field the
+  Python side never learned about. The reverse direction — a field deleted from
+  both the Go struct and the fixture — is not caught by either, and is why the
+  sanitization table is duplicated as an explicit cross-check.
 - Mutation checks confirming the tests fail when probe results are ignored and
   when noise suppression is removed.
 - End-to-end against a running `edg-core`: a raw NATS publish registers, appears

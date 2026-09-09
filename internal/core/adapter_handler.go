@@ -46,9 +46,6 @@ type AdapterHandlerOptions struct {
 	Clock Clock
 	// ProbeTimeout bounds the active liveness probe.
 	ProbeTimeout time.Duration
-	// HelloDelay re-broadcasts hello once more after this long, catching
-	// adapters that were themselves restarting during the first broadcast.
-	HelloDelay time.Duration
 }
 
 // NewAdapterHandler builds a handler around a registry.

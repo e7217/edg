@@ -171,6 +171,12 @@ func (r *AdapterRegistry) Observe(frame *AdapterStatusFrame, subjectID string, r
 
 	r.entries[subjectID] = entry
 	r.reindexAssets(subjectID, prev, entry)
+	// Events are published outside the lock, so they must not carry the
+	// pointer the registry keeps: markStale mutates entries in place, which
+	// would be a data race against a consumer reading the event.
+	for i := range events {
+		events[i].Adapter = cloneEntry(events[i].Adapter)
+	}
 	r.mu.Unlock()
 
 	r.publish(events)
@@ -253,7 +259,11 @@ func (r *AdapterRegistry) deriveRate(id string, frame *AdapterStatusFrame, at ti
 
 func (r *AdapterRegistry) clampInterval(d time.Duration) time.Duration {
 	if d <= 0 {
-		return r.opts.MaxInterval
+		// An adapter that announces nothing (or rounds a sub-second interval
+		// down to zero) gets the tightest deadline, not the loosest. Choosing
+		// MaxInterval here would give a misconfigured adapter a 15-minute
+		// grace period — failing open on the one question this plane answers.
+		return r.opts.MinInterval
 	}
 	if d < r.opts.MinInterval {
 		return r.opts.MinInterval
@@ -333,6 +343,15 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// cloneEntry copies an entry for hand-off outside the registry lock.
+func cloneEntry(e *AdapterEntry) *AdapterEntry {
+	if e == nil {
+		return nil
+	}
+	clone := *e
+	return &clone
 }
 
 func summarize(e *AdapterEntry) *AdapterEntrySummary {
@@ -554,6 +573,15 @@ func (r *AdapterRegistry) markStale(id string, now time.Time, reason string) []A
 	if !ok || e.Availability != AvailabilityOnline {
 		return nil
 	}
+	// Re-check the deadline under the lock. The verdict was computed before a
+	// probe that can take seconds, and a heartbeat arriving in that window
+	// legitimately revives the adapter — marking it stale anyway would emit a
+	// false event and leave a self-contradictory entry whose LastSeenAt is
+	// newer than its StaleSince.
+	if !now.After(e.DeadlineAt) {
+		adapterStaleAverted.Add(1)
+		return nil
+	}
 	prev := summarize(e)
 	e.Availability = AvailabilityStale
 	e.StaleSince = &now
@@ -571,7 +599,16 @@ func (r *AdapterRegistry) extendDeadline(id string, now time.Time) {
 	defer r.mu.Unlock()
 
 	if e, ok := r.entries[id]; ok {
-		e.DeadlineAt = now.Add(r.deadline(time.Duration(e.HeartbeatIntervalS) * time.Second))
+		// Anchor on the last frame actually received, not on the sweep's start
+		// time: a heartbeat that arrived during the probe already pushed the
+		// deadline further out and must not be pulled back.
+		base := now
+		if e.LastSeenAt.After(base) {
+			base = e.LastSeenAt
+		}
+		if extended := base.Add(r.deadline(time.Duration(e.HeartbeatIntervalS) * time.Second)); extended.After(e.DeadlineAt) {
+			e.DeadlineAt = extended
+		}
 	}
 }
 
@@ -581,6 +618,13 @@ func (r *AdapterRegistry) forget(id string, now time.Time) []AdapterChangeEvent 
 
 	e, ok := r.entries[id]
 	if !ok {
+		return nil
+	}
+	// The forget list was computed before the probe phase. An adapter that
+	// restarted in that window is live again; deleting it would drop a healthy
+	// adapter from the API and re-emit first_seen on its next frame.
+	if e.StaleSince == nil || now.Sub(*e.StaleSince) < r.opts.ForgetAfter {
+		adapterForgetAverted.Add(1)
 		return nil
 	}
 	clone := *e

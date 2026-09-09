@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"regexp"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,10 +25,6 @@ const (
 	// noise. Deliberately independent of the device link: a PLC that answers
 	// but returns garbage leaves the connection state "connected".
 	degradedAfterErrors = 3
-	// maxReportedAssets bounds the per-asset detail. A gateway fronting
-	// hundreds of assets would otherwise send a 10 KB frame every heartbeat;
-	// the rolled-up device_counts still convey the shape.
-	maxReportedAssets = 50
 	// offlineFlushTimeout bounds the wait for the goodbye frame to reach the
 	// server. Short: a shutting-down adapter must not hang on an unreachable
 	// broker.
@@ -68,6 +65,11 @@ type statusReporter struct {
 	stopOnce sync.Once
 	stop     chan struct{}
 	done     chan struct{}
+
+	// subs are unsubscribed on stop. Without this an adapter that has stopped
+	// collecting keeps answering probes with "ok" and re-announcing itself as
+	// running, so core reports a dead adapter as healthy.
+	subs []*nats.Subscription
 }
 
 func newStatusReporter(client *Client, cfg *AdapterConfig) *statusReporter {
@@ -79,6 +81,16 @@ func newStatusReporter(client *Client, cfg *AdapterConfig) *statusReporter {
 	if adapterID == "" {
 		// A one-adapter-per-asset deployment needs no new configuration.
 		adapterID = cfg.AssetID
+	}
+	// adapter_id is the last token of the status subject, so it must be a
+	// single NATS token. asset_id has no such constraint, and the default
+	// falls back to it: an asset named "line3.press" would produce frames core
+	// drops with no symptom beyond the adapter never appearing.
+	if sanitized := sanitizeAdapterID(adapterID); sanitized != adapterID {
+		cfg.Logger.Warn("adapter_id is not a valid NATS subject token; reporting under a sanitized id",
+			"from", adapterID, "to", sanitized,
+			"hint", "set AdapterID explicitly to control it")
+		adapterID = sanitized
 	}
 	return &statusReporter{
 		client:      client,
@@ -92,6 +104,31 @@ func newStatusReporter(client *Client, cfg *AdapterConfig) *statusReporter {
 		stop:        make(chan struct{}),
 		done:        make(chan struct{}),
 	}
+}
+
+// adapterIDInvalid matches every character that cannot appear in a subject
+// token. A dot would silently reshape platform.adapter.status.<id> into extra
+// tokens; wildcards would make the frame unroutable.
+var adapterIDInvalid = regexp.MustCompile(`[^A-Za-z0-9_:\-]`)
+
+// sanitizeAdapterID makes an id usable as a subject token, deterministically so
+// that a restart maps to the same id.
+func sanitizeAdapterID(id string) string {
+	out := adapterIDInvalid.ReplaceAllString(id, "-")
+	if out == "" {
+		return "adapter"
+	}
+	if len(out) > 64 {
+		out = out[:64]
+	}
+	// The first character must be alphanumeric.
+	if c := out[0]; !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+		out = "a" + out
+		if len(out) > 64 {
+			out = out[:64]
+		}
+	}
+	return out
 }
 
 // newInstanceID identifies this process run, so core can tell a restart from a
@@ -119,17 +156,21 @@ func (r *statusReporter) subscribeControl() error {
 		return err
 	}
 	// hello: core restarted and wants everyone to re-announce.
-	if _, err := nc.Subscribe(SubjectAdapterHello, func(_ *nats.Msg) {
+	hello, err := nc.Subscribe(SubjectAdapterHello, func(_ *nats.Msg) {
 		r.publish(context.Background(), AdapterPhaseAnnounce)
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	// ping: core missed a heartbeat and is checking before declaring us dead.
-	if _, err := nc.Subscribe(SubjectAdapterPingPrefix+r.adapterID, func(msg *nats.Msg) {
+	ping, err := nc.Subscribe(SubjectAdapterPingPrefix+r.adapterID, func(msg *nats.Msg) {
 		_ = msg.Respond([]byte(`{"ok":true}`))
-	}); err != nil {
+	})
+	if err != nil {
+		_ = hello.Unsubscribe()
 		return err
 	}
+	r.subs = append(r.subs, hello, ping)
 	return nil
 }
 
@@ -289,6 +330,12 @@ func (r *statusReporter) stopWith(ctx context.Context) {
 	r.stopOnce.Do(func() {
 		close(r.stop)
 		<-r.done
+		// Stop answering before saying goodbye: a probe answered after the
+		// offline frame would resurrect a stopped adapter in core's registry.
+		for _, sub := range r.subs {
+			_ = sub.Unsubscribe()
+		}
+		r.subs = nil
 		r.publish(ctx, AdapterPhaseOffline)
 		// Publishing is buffered and Client.Close drains asynchronously, so
 		// without an explicit flush the goodbye frame is lost whenever the

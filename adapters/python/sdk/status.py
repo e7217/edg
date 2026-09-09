@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 import time
@@ -38,6 +39,27 @@ DEFAULT_HEARTBEAT_INTERVAL = 10.0
 # Independent of the device link on purpose: a PLC that answers but returns
 # garbage leaves the connection state "connected".
 DEGRADED_AFTER_ERRORS = 3
+
+# Bounds the wait for the goodbye frame to reach the server. Short: a shutting
+# down adapter must not hang on an unreachable broker.
+OFFLINE_FLUSH_TIMEOUT = 2
+
+
+# Every character that cannot appear in a subject token. A dot would silently
+# reshape platform.adapter.status.<id> into extra tokens.
+_ADAPTER_ID_INVALID = re.compile(r"[^A-Za-z0-9_:\-]")
+
+
+def sanitize_adapter_id(adapter_id: str) -> str:
+    """Make an id usable as a subject token, deterministically so a restart
+    maps to the same id."""
+    out = _ADAPTER_ID_INVALID.sub("-", adapter_id)
+    if not out:
+        return "adapter"
+    out = out[:64]
+    if not out[0].isalnum():
+        out = ("a" + out)[:64]
+    return out
 
 
 class RunState(str, Enum):
@@ -101,6 +123,7 @@ class StatusReporter:
     _last_error: str = ""
     _last_error_at: str | None = None
     _task: asyncio.Task | None = None
+    _subs: list = field(default_factory=list)
     _dirty: asyncio.Event | None = None
     _running: bool = False
 
@@ -108,6 +131,19 @@ class StatusReporter:
         if not self.adapter_id:
             # One adapter per asset needs no new configuration.
             self.adapter_id = self.asset_id
+        # adapter_id is the last token of the status subject, so it must be a
+        # single NATS token. asset_id has no such constraint and the default
+        # falls back to it: an asset named "line3.press" would produce frames
+        # core drops, with no symptom beyond the adapter never appearing.
+        sanitized = sanitize_adapter_id(self.adapter_id)
+        if sanitized != self.adapter_id:
+            logger.warning(
+                "adapter_id %r is not a valid NATS subject token; reporting as %r. "
+                "Set adapter_id explicitly to control it.",
+                self.adapter_id,
+                sanitized,
+            )
+            self.adapter_id = sanitized
         if self.heartbeat_interval <= 0:
             self.heartbeat_interval = DEFAULT_HEARTBEAT_INTERVAL
         # Identifies this process run so core can detect restarts and two
@@ -140,7 +176,28 @@ class StatusReporter:
             except asyncio.CancelledError:
                 pass
             self._task = None
+
+        # Stop answering before saying goodbye: a probe answered after the
+        # offline frame would resurrect a stopped adapter in core's registry.
+        for sub in self._subs:
+            try:
+                await sub.unsubscribe()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"Unsubscribe adapter control failed: {e}")
+        self._subs = []
+
         await self.publish(AdapterPhase.OFFLINE)
+
+        # Publishing is buffered and disconnect() drains asynchronously, so
+        # without an explicit flush the goodbye frame is lost whenever the
+        # process exits promptly. Core would then report the adapter stale
+        # minutes later instead of knowing at once that it stopped cleanly.
+        nc = self.client.nc
+        if nc is not None:
+            try:
+                await nc.flush(timeout=OFFLINE_FLUSH_TIMEOUT)
+            except Exception as e:
+                logger.debug(f"Flush adapter offline frame failed: {e}")
 
     async def _subscribe_control(self) -> None:
         nc = self.client.nc
@@ -148,15 +205,15 @@ class StatusReporter:
             return
         try:
             # hello: core restarted and wants everyone to re-announce.
-            await nc.subscribe(
+            self._subs.append(await nc.subscribe(
                 SUBJECT_ADAPTER_HELLO,
                 cb=lambda _msg: asyncio.create_task(self.publish(AdapterPhase.ANNOUNCE)),
-            )
+            ))
             # ping: core missed a heartbeat and checks before declaring us dead.
-            await nc.subscribe(
+            self._subs.append(await nc.subscribe(
                 SUBJECT_ADAPTER_PING_PREFIX + self.adapter_id,
                 cb=self._handle_ping,
-            )
+            ))
         except Exception as e:  # pragma: no cover - defensive
             logger.warning(f"Adapter status control subscriptions failed: {e}")
 

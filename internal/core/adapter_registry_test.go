@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -723,4 +724,286 @@ func TestDriftIsEmptyForHealthyFleet(t *testing.T) {
 	report := reg.Drift()
 	assert.Zero(t, report.IssueCount)
 	assert.NotNil(t, report.Issues, "must serialize as [] not null")
+}
+
+// blockingProber holds a probe open so a test can deterministically inject a
+// heartbeat into the window where the registry has released its lock.
+type blockingProber struct {
+	entered chan string
+	release chan bool
+}
+
+func newBlockingProber() *blockingProber {
+	return &blockingProber{entered: make(chan string, 4), release: make(chan bool, 4)}
+}
+
+func (p *blockingProber) Probe(id string) bool {
+	p.entered <- id
+	return <-p.release
+}
+
+// TestHeartbeatDuringProbeIsNotOverwritten pins a race an adversarial review
+// found: the stale verdict is computed before a probe that can take seconds,
+// and a heartbeat arriving in that window legitimately revives the adapter.
+// Marking it stale anyway produced a false event and an entry whose LastSeenAt
+// was newer than its StaleSince.
+func TestHeartbeatDuringProbeIsNotOverwritten(t *testing.T) {
+	clock := newFakeClock()
+	pub := &recordingPublisher{}
+	prober := newBlockingProber()
+	reg := NewAdapterRegistry(AdapterRegistryOptions{
+		Clock: clock, Publisher: pub, Prober: prober,
+		ProbeOnMiss: true, StaleFloor: 15 * time.Second,
+	})
+
+	reg.Observe(heartbeat("modbus-1", "i1", 1), "modbus-1", clock.Now())
+	pub.drain()
+
+	clock.Advance(31 * time.Second)
+	done := make(chan struct{})
+	go func() { defer close(done); reg.Sweep(clock.Now()) }()
+
+	<-prober.entered // the registry lock is released here
+
+	// The adapter is alive after all and its heartbeat lands mid-probe.
+	clock.Advance(time.Second)
+	reg.Observe(heartbeat("modbus-1", "i1", 2), "modbus-1", clock.Now())
+
+	prober.release <- false // the probe still fails (a lost reply)
+	<-done
+
+	entry, ok := reg.Get("modbus-1")
+	require.True(t, ok)
+	assert.Equal(t, AvailabilityOnline, entry.Availability,
+		"a heartbeat received during the probe must win over the stale verdict computed before it")
+	assert.Nil(t, entry.StaleSince)
+
+	for _, ev := range pub.drain() {
+		assert.NotEqual(t, AdapterChangeStale, ev.Change, "no false stale event")
+	}
+}
+
+// TestRestartDuringProbeIsNotForgotten is the same window applied to the forget
+// path, which had no revalidation at all: an adapter that restarts while a
+// probe is in flight was deleted outright, dropping a healthy adapter from the
+// API and re-emitting first_seen on its next frame.
+func TestRestartDuringProbeIsNotForgotten(t *testing.T) {
+	clock := newFakeClock()
+	pub := &recordingPublisher{}
+	prober := newBlockingProber()
+	reg := NewAdapterRegistry(AdapterRegistryOptions{
+		Clock: clock, Publisher: pub, Prober: prober,
+		ProbeOnMiss: true, StaleFloor: 15 * time.Second, ForgetAfter: time.Hour,
+	})
+
+	// "old" said goodbye long ago and is due to be forgotten; "other" is
+	// merely expired, which is what opens the probe window.
+	stopped := heartbeat("old", "i1", 1)
+	stopped.Phase = AdapterPhaseOffline
+	reg.Observe(stopped, "old", clock.Now())
+	reg.Observe(heartbeat("other", "i2", 1), "other", clock.Now())
+	pub.drain()
+
+	clock.Advance(time.Hour + time.Minute)
+	done := make(chan struct{})
+	go func() { defer close(done); reg.Sweep(clock.Now()) }()
+
+	<-prober.entered
+
+	// "old" comes back with a fresh instance while the probe is in flight.
+	reg.Observe(heartbeat("old", "i2", 1), "old", clock.Now())
+
+	prober.release <- false
+	<-done
+
+	entry, ok := reg.Get("old")
+	require.True(t, ok, "a restarted adapter must not be deleted by a forget decision made before it came back")
+	assert.Equal(t, AvailabilityOnline, entry.Availability)
+	assert.Contains(t, reg.AdaptersForAsset("press-01"), "old",
+		"the asset index must still point at the restarted adapter")
+}
+
+// TestChangeEventsDoNotShareRegistryPointers: events are published outside the
+// lock while markStale mutates entries in place, so handing out the stored
+// pointer is a data race. Run under -race.
+func TestChangeEventsDoNotShareRegistryPointers(t *testing.T) {
+	clock := newFakeClock()
+	seen := make(chan *AdapterEntry, 16)
+	reg := NewAdapterRegistry(AdapterRegistryOptions{
+		Clock:      clock,
+		Publisher:  publisherFunc(func(ev AdapterChangeEvent) { seen <- ev.Adapter }),
+		StaleFloor: 15 * time.Second,
+	})
+
+	reg.Observe(heartbeat("modbus-1", "i1", 1), "modbus-1", clock.Now())
+	published := <-seen
+
+	clock.Advance(31 * time.Second)
+	reg.Sweep(clock.Now())
+
+	assert.Equal(t, AvailabilityOnline, published.Availability,
+		"the entry handed to a subscriber must not be mutated by a later transition")
+
+	stored, _ := reg.Get("modbus-1")
+	assert.Equal(t, AvailabilityStale, stored.Availability)
+}
+
+type publisherFunc func(AdapterChangeEvent)
+
+func (f publisherFunc) PublishAdapterChanged(ev AdapterChangeEvent) { f(ev) }
+
+// TestMissingIntervalGetsTightestDeadline: an adapter announcing nothing (or
+// rounding a sub-second interval down to zero) must get the tightest deadline,
+// not the loosest. Mapping it to MaxInterval gave a misconfigured adapter a
+// 15-minute grace period — failing open on the one question this plane answers.
+func TestMissingIntervalGetsTightestDeadline(t *testing.T) {
+	reg, clock, _ := newTestRegistry(t)
+
+	f := heartbeat("modbus-1", "i1", 1)
+	f.HeartbeatIntervalS = 0
+	reg.Observe(f, "modbus-1", clock.Now())
+
+	entry, _ := reg.Get("modbus-1")
+	assert.Equal(t, clock.Now().Add(15*time.Second), entry.DeadlineAt,
+		"a zero interval must fall back to the floor, not to the maximum")
+}
+
+// TestReaperLoopActuallyExpires closes a gap an adversarial review found: every
+// expiry test drove Sweep directly, so gutting reapLoop entirely left the whole
+// suite green. Nothing exercised the ticker that makes expiry happen in
+// production.
+func TestReaperLoopActuallyExpires(t *testing.T) {
+	clock := newFakeClock()
+	pub := &recordingPublisher{}
+	reg := NewAdapterRegistry(AdapterRegistryOptions{
+		Clock: clock, Publisher: pub,
+		// A 2s floor gives a 1s scan interval, so the loop ticks promptly
+		// without the test depending on wall-clock precision.
+		StaleFloor: 2 * time.Second,
+	})
+
+	reg.Observe(heartbeat("modbus-1", "i1", 1), "modbus-1", clock.Now())
+	pub.drain()
+
+	reg.Start()
+	t.Cleanup(reg.Stop)
+
+	// Advance the injected clock past the deadline and let the real ticker fire.
+	clock.Advance(time.Hour)
+
+	require.Eventually(t, func() bool {
+		entry, ok := reg.Get("modbus-1")
+		return ok && entry.Availability == AvailabilityStale
+	}, 5*time.Second, 20*time.Millisecond,
+		"the reaper goroutine must expire adapters without anyone calling Sweep")
+}
+
+// gatedProber blocks every probe until the test releases it, so in-flight
+// concurrency is observable rather than a scheduling accident. The previous
+// version of this test used a prober that returned immediately, so probes
+// almost never overlapped and the assertion passed even with the semaphore
+// widened to a million.
+type gatedProber struct {
+	mu       sync.Mutex
+	inFlight int
+	maxSeen  int
+	calls    int
+	release  chan struct{}
+}
+
+func newGatedProber() *gatedProber {
+	return &gatedProber{release: make(chan struct{})}
+}
+
+func (p *gatedProber) Probe(string) bool {
+	p.mu.Lock()
+	p.inFlight++
+	p.calls++
+	if p.inFlight > p.maxSeen {
+		p.maxSeen = p.inFlight
+	}
+	p.mu.Unlock()
+
+	<-p.release
+
+	p.mu.Lock()
+	p.inFlight--
+	p.mu.Unlock()
+	return false
+}
+
+func (p *gatedProber) snapshot() (maxSeen, calls int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.maxSeen, p.calls
+}
+
+// TestProbeConcurrencyIsActuallyBounded replaces an assertion that passed even
+// with MaxProbes raised to a million, because the prober never blocked and so
+// probes never actually overlapped.
+func TestProbeConcurrencyIsActuallyBounded(t *testing.T) {
+	const adapters = 40
+	const limit = 4
+
+	clock := newFakeClock()
+	prober := newGatedProber()
+	reg := NewAdapterRegistry(AdapterRegistryOptions{
+		Clock: clock, Publisher: &recordingPublisher{}, Prober: prober,
+		ProbeOnMiss: true, StaleFloor: 15 * time.Second, MaxProbes: limit,
+	})
+
+	for i := 0; i < adapters; i++ {
+		id := fmt.Sprintf("adapter-%02d", i)
+		reg.Observe(heartbeat(id, "i1", 1), id, clock.Now())
+	}
+
+	clock.Advance(31 * time.Second)
+	done := make(chan struct{})
+	go func() { defer close(done); reg.Sweep(clock.Now()) }()
+
+	// Wait until the semaphore is saturated, then confirm it never exceeds the
+	// limit even though every probe is blocked and all 40 goroutines exist.
+	require.Eventually(t, func() bool {
+		maxSeen, _ := prober.snapshot()
+		return maxSeen >= limit
+	}, 3*time.Second, 5*time.Millisecond, "probes should saturate the budget")
+
+	time.Sleep(50 * time.Millisecond) // give any unbounded excess a chance to appear
+	maxSeen, _ := prober.snapshot()
+	assert.LessOrEqual(t, maxSeen, limit,
+		"concurrent probes must respect MaxProbes; %d adapters expired at once", adapters)
+
+	close(prober.release)
+	<-done
+
+	assert.Equal(t, adapters, reg.CountBy()[AvailabilityStale],
+		"every expired adapter still gets a verdict, probed or shed by the budget")
+}
+
+// TestDeviceCountsAndTruncationSurvive: a gateway fronting hundreds of assets
+// reports a rollup instead of the full list, and the rollup changing is the
+// only signal that half of them died.
+func TestDeviceCountsAndTruncationSurvive(t *testing.T) {
+	reg, clock, pub := newTestRegistry(t)
+
+	f := heartbeat("gateway-1", "i1", 1)
+	f.Assets = nil
+	f.AssetsTruncated = true
+	f.DeviceCounts = map[string]int{"connected": 200}
+	reg.Observe(f, "gateway-1", clock.Now())
+	pub.drain()
+
+	entry, _ := reg.Get("gateway-1")
+	assert.Equal(t, map[string]int{"connected": 200}, entry.DeviceCounts)
+
+	clock.Advance(10 * time.Second)
+	f2 := heartbeat("gateway-1", "i1", 2)
+	f2.Assets = nil
+	f2.AssetsTruncated = true
+	f2.DeviceCounts = map[string]int{"connected": 100, "error": 100}
+	reg.Observe(f2, "gateway-1", clock.Now())
+
+	entry, _ = reg.Get("gateway-1")
+	assert.Equal(t, 100, entry.DeviceCounts["error"],
+		"half the fleet going down must be visible in the rollup")
 }

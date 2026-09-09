@@ -93,6 +93,7 @@ class BaseAdapter(ABC):
         self._disable_status_reporting = disable_status_reporting
         self._report_host = report_host
         self._status: StatusReporter | None = None
+        self._stop_task: asyncio.Task[Any] | None = None
 
     @property
     def device_state(self) -> DeviceState:
@@ -296,7 +297,7 @@ class BaseAdapter(ABC):
         # Setup signal handlers
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
+            loop.add_signal_handler(sig, self._on_signal)
 
         logger.info(f"Starting adapter: {self.asset_id}")
         print("=" * 40)
@@ -307,6 +308,11 @@ class BaseAdapter(ABC):
 
         # Connect to NATS
         await self._client.connect()
+
+        # Set before anything that can fail below: stop() is guarded by this
+        # flag, so leaving it False while the reporter is already heartbeating
+        # would let a failed startup keep reporting "running" forever.
+        self._running = True
 
         # Runtime status reporting (ADR 0008). On by default: an adapter nobody
         # can see is the problem this plane exists to solve.
@@ -325,13 +331,29 @@ class BaseAdapter(ABC):
         await self.on_start()
 
         # Start collection loop
-        self._running = True
         self._task = asyncio.create_task(self._collect_loop())
 
         try:
             await self._task
         except asyncio.CancelledError:
             pass
+
+        # A signal handler runs stop() as its own task. Awaiting it here keeps
+        # the event loop alive until the goodbye frame has been flushed;
+        # otherwise start() returns, asyncio.run closes the loop, and core
+        # never learns the adapter shut down cleanly.
+        if self._stop_task is not None:
+            try:
+                await self._stop_task
+            except asyncio.CancelledError:
+                pass
+
+    def _on_signal(self) -> None:
+        """SIGINT/SIGTERM handler. Keeps a reference to the stop task so start()
+        can wait for it; a fire-and-forget task would be abandoned when the loop
+        closes."""
+        if self._stop_task is None:
+            self._stop_task = asyncio.create_task(self.stop())
 
     async def stop(self) -> None:
         """Stop adapter"""

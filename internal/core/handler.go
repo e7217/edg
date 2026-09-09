@@ -36,7 +36,8 @@ var (
 	adapterStale          = expvar.NewInt("edg_core_adapter_stale_total")
 	adapterProbeRecovered = expvar.NewInt("edg_core_adapter_probe_recovered")
 	adapterProbesSkipped  = expvar.NewInt("edg_core_adapter_probes_skipped")
-	adapterDuplicateIDs   = expvar.NewInt("edg_core_adapter_duplicate_ids")
+	adapterStaleAverted   = expvar.NewInt("edg_core_adapter_stale_averted")
+	adapterForgetAverted  = expvar.NewInt("edg_core_adapter_forget_averted")
 )
 
 // errUndeclaredAsset is the dead-letter reason when an undeclared asset_id is

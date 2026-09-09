@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -406,5 +407,94 @@ func TestOfflineFrameIsFlushedBeforeReturn(t *testing.T) {
 		}
 	case <-time.After(500 * time.Millisecond):
 		t.Fatal("goodbye frame was not flushed before Run returned")
+	}
+}
+
+// TestStoppedAdapterStopsAnsweringProbes: leaving the ping subscription in
+// place meant a stopped adapter kept replying "ok", so core would keep a dead
+// adapter marked online indefinitely — the exact failure this plane exists to
+// prevent.
+func TestStoppedAdapterStopsAnsweringProbes(t *testing.T) {
+	url := startTestNATSServer(t)
+	control := connectControl(t, url)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	a := NewAdapter(AdapterConfig{
+		AssetID:         "sensor-1",
+		NATSURL:         url,
+		CollectInterval: 20 * time.Millisecond,
+	}, &fakeCollector{})
+	_ = a.Run(ctx)
+
+	// Run has returned: the adapter is gone and must not answer.
+	reply := "platform.adapter.pong.sensor-1.test"
+	sub, err := control.SubscribeSync(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := control.PublishRequest(SubjectAdapterPingPrefix+"sensor-1", reply, []byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := control.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if msg, err := sub.NextMsg(400 * time.Millisecond); err == nil {
+		t.Fatalf("a stopped adapter answered a liveness probe: %s", msg.Data)
+	}
+}
+
+// TestSanitizeAdapterID closes a silent-failure path: adapter_id defaults to
+// asset_id, which has no charset constraint, but adapter_id is the last token
+// of the status subject. An asset named "line3.press" produced frames core
+// dropped, with no symptom beyond the adapter never appearing.
+func TestSanitizeAdapterID(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"modbus-line3", "modbus-line3"},
+		{"line3.press", "line3-press"},
+		{"has space", "has-space"},
+		{"wild*card", "wild-card"},
+		{"a/b", "a-b"},
+		{"-leading", "a-leading"},
+		{"", "adapter"},
+		{"3f2504e0-4f89-11d3-9a0c-0305e82c3301", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"},
+	}
+	for _, tt := range tests {
+		if got := sanitizeAdapterID(tt.in); got != tt.want {
+			t.Errorf("sanitizeAdapterID(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	if got := sanitizeAdapterID(strings.Repeat("a", 100)); len(got) != 64 {
+		t.Errorf("length not clamped: %d", len(got))
+	}
+}
+
+// TestDottedAssetIDStillReports proves the sanitized id actually reaches core
+// rather than being dropped.
+func TestDottedAssetIDStillReports(t *testing.T) {
+	url := startTestNATSServer(t)
+	control := connectControl(t, url)
+	frames := collectStatus(t, control)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	a := NewAdapter(AdapterConfig{
+		AssetID:         "line3.press",
+		NATSURL:         url,
+		CollectInterval: 20 * time.Millisecond,
+	}, &fakeCollector{})
+	_ = a.Run(ctx)
+
+	f := waitForFrame(t, frames, func(f AdapterStatusFrame) bool {
+		return f.Phase == AdapterPhaseOnline
+	}, "an online frame despite the dotted asset id")
+
+	if f.AdapterID != "line3-press" {
+		t.Errorf("adapter_id = %q, want the sanitized form", f.AdapterID)
+	}
+	if f.Assets[0].AssetID != "line3.press" {
+		t.Errorf("the asset id itself must not be rewritten, got %q", f.Assets[0].AssetID)
 	}
 }

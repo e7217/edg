@@ -205,3 +205,126 @@ class TestOfflineFlush:
         await r.start()
         r.client.nc.flush.side_effect = RuntimeError("broker gone")
         await r.stop()
+
+
+class TestShutdownPaths:
+    """An adversarial review found two ways a stopped adapter kept reporting
+    itself healthy."""
+
+    @pytest.mark.asyncio
+    async def test_stop_works_after_a_failed_start(self, monkeypatch):
+        """_running was set after the reporter started, so a failure in
+        on_start() left stop() short-circuited and the reporter heartbeating
+        'running' forever."""
+        from ..adapter import BaseAdapter
+
+        class FailingStart(BaseAdapter):
+            async def collect(self):
+                return []
+
+            async def on_start(self):
+                raise RuntimeError("device library missing")
+
+        adapter = FailingStart(asset_id="sensor-1", disable_status_reporting=True)
+        adapter._client.connect = AsyncMock()
+        adapter._client.disconnect = AsyncMock()
+
+        with pytest.raises(RuntimeError):
+            await adapter.start()
+
+        assert adapter._running is True, "startup got far enough that stop() must not be a no-op"
+        await adapter.stop()
+        assert adapter._running is False
+
+    @pytest.mark.asyncio
+    async def test_signal_handler_keeps_a_reference(self):
+        """A fire-and-forget stop task is abandoned when asyncio.run closes the
+        loop, so the goodbye frame is never sent."""
+        from ..adapter import BaseAdapter
+
+        class Simple(BaseAdapter):
+            async def collect(self):
+                return []
+
+        adapter = Simple(asset_id="sensor-1", disable_status_reporting=True)
+        adapter._client.connect = AsyncMock()
+        adapter._client.disconnect = AsyncMock()
+        adapter._running = True
+
+        adapter._on_signal()
+        assert adapter._stop_task is not None, "start() must be able to await the shutdown"
+        await adapter._stop_task
+
+    @pytest.mark.asyncio
+    async def test_repeated_signals_do_not_stack_stop_tasks(self):
+        from ..adapter import BaseAdapter
+
+        class Simple(BaseAdapter):
+            async def collect(self):
+                return []
+
+        adapter = Simple(asset_id="sensor-1", disable_status_reporting=True)
+        adapter._client.disconnect = AsyncMock()
+        adapter._running = True
+
+        adapter._on_signal()
+        first = adapter._stop_task
+        adapter._on_signal()
+        assert adapter._stop_task is first
+        await first
+
+
+class TestAdapterIDSanitization:
+    """adapter_id defaults to asset_id, which has no charset constraint, but
+    adapter_id is the last token of the status subject. Frames under an invalid
+    id are dropped by core with no symptom beyond the adapter never appearing."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("modbus-line3", "modbus-line3"),
+            ("line3.press", "line3-press"),
+            ("has space", "has-space"),
+            ("wild*card", "wild-card"),
+            ("a/b", "a-b"),
+            ("-leading", "a-leading"),
+            ("", "adapter"),
+            ("3f2504e0-4f89-11d3-9a0c-0305e82c3301", "3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
+        ],
+    )
+    def test_sanitize(self, raw, expected):
+        from ..status import sanitize_adapter_id
+
+        assert sanitize_adapter_id(raw) == expected
+
+    def test_length_is_clamped(self):
+        from ..status import sanitize_adapter_id
+
+        assert len(sanitize_adapter_id("a" * 100)) == 64
+
+    def test_dotted_asset_id_is_sanitized_but_asset_is_not(self):
+        r = make_reporter()
+        r.asset_id = "line3.press"
+        r.adapter_id = ""
+        r.__post_init__()
+
+        assert r.adapter_id == "line3-press"
+        frame = r.frame(AdapterPhase.HEARTBEAT)
+        assert frame["assets"][0]["asset_id"] == "line3.press", "the asset id itself must not be rewritten"
+
+    def test_go_and_python_sanitize_identically(self):
+        """The two SDKs must map the same asset id to the same adapter id, or a
+        deployment that mixes them produces two registry entries for one
+        adapter."""
+        from ..status import sanitize_adapter_id
+
+        # Mirrors the table in adapters/go/sdk/status_test.go TestSanitizeAdapterID.
+        for raw, expected in [
+            ("line3.press", "line3-press"),
+            ("has space", "has-space"),
+            ("wild*card", "wild-card"),
+            ("a/b", "a-b"),
+            ("-leading", "a-leading"),
+            ("", "adapter"),
+        ]:
+            assert sanitize_adapter_id(raw) == expected
