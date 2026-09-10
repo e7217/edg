@@ -15,9 +15,18 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
-        with:
-          release-type: go
-          package-name: edg
+        # Deliberately no `release-type:` or `package-name:` inputs.
+        #
+        # `package-name` is not a v4 input at all (the run logs it as an
+        # unexpected input), and passing `release-type` puts the action in an
+        # inline-config mode where it synthesises a config from the inputs and
+        # never reads release-please-config.json. That file is where
+        # `bump-minor-pre-major` lives, so ignoring it meant the first release
+        # was proposed as 1.0.0 rather than 0.1.0, on the strength of breaking
+        # changes made long before there was anything to break.
+        #
+        # With the inputs gone, v4 reads release-please-config.json (its
+        # default) and that file is the single source of release behaviour.
 
       # The logic below will be executed when the release is created
       - name: Checkout code

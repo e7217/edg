@@ -13,7 +13,11 @@
           "path": "README.md",
           "glob": false
         }
-      ]
+      ],
+      "_comment_include_component_in_tag": "Manifest mode tags as <component>-v<version> by default. release.yml triggers on tags: ['v*'], so a prefixed tag would never fire the builder. Verified by dry-run: tagName v0.0.0, not edg-v0.0.0.",
+      "include-component-in-tag": false,
+      "_comment_initial_version": "release-please treats 'no existing tag' as an initial release and defaults to 1.0.0; bump-minor-pre-major only applies to bumps from an existing version, so it does not help here. Verified by dry-run: without this the first release is proposed as 1.0.0.",
+      "initial-version": "0.1.0"
     }
   }
 }

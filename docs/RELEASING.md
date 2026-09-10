@@ -149,6 +149,32 @@ Extract a release artifact and verify version information:
 # Git Commit: def456...
 ```
 
+
+## Release Configuration
+
+All release behaviour lives in `release-please-config.json`. The workflow
+passes no `release-type` or `package-name` inputs on purpose: supplying them
+puts release-please-action v4 into an inline-config mode where it synthesises a
+config from the inputs and never reads that file, which is how
+`bump-minor-pre-major` sat there having no effect.
+
+Two settings are load-bearing and were verified with
+`npx release-please release-pr --dry-run`:
+
+- `include-component-in-tag: false` — without it, manifest mode tags releases
+  as `edg-v0.1.0`, and `release.yml` triggers on `v*`, so the builder would
+  never run.
+- `initial-version: "0.1.0"` — release-please treats "no existing tag" as an
+  initial release and defaults to `1.0.0`. `bump-minor-pre-major` does not
+  apply, because there is no previous version to bump from.
+
+If you change either, dry-run first and check the proposed tag name:
+
+```bash
+npx release-please release-pr --repo-url=<owner>/<repo> \
+  --token="$(gh auth token)" --target-branch=<your-branch> --dry-run
+```
+
 ## Conventional Commit Types
 
 Release-please recognizes these commit types:
