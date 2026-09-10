@@ -24,8 +24,33 @@ This guide provides detailed instructions for installing, configuring, and monit
    ```
    This will:
    - Install binaries to `/opt/edg/bin/`
-   - Copy configs to `/opt/edg/configs/`
+   - Copy configs to `/opt/edg/configs/` and templates to `/opt/edg/templates/`
+   - Link `/opt/edg/config.yaml` to the selected environment config
    - Create systemd services (Linux only)
+
+   `EDG_ENV` selects which config becomes active (`dev`, `staging` or `prod`;
+   default `prod`):
+
+   ```bash
+   sudo EDG_ENV=dev ./install.sh
+   ```
+
+   The link is what makes the installed config take effect. `edg-core` looks
+   for `/opt/edg/config.yaml`, and the systemd unit passes `-config` pointing
+   at it; without the link the process finds nothing and runs on compiled-in
+   defaults, which use `nats.auth.mode: compat` rather than the `strict` the
+   production config specifies. **Whatever happens, the startup log names the
+   file it loaded** — check it before trusting a config change:
+
+   ```
+   [Config] loaded /opt/edg/config.yaml (-config flag)
+   ```
+
+   or, if nothing was found:
+
+   ```
+   [Config] no config file found (searched: ...); using built-in defaults.
+   ```
 
 ### Managing Services (Systemd)
 

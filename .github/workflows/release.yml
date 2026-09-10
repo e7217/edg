@@ -72,26 +72,18 @@ jobs:
 
       - name: Package Release
         run: |
+          set -euo pipefail
           DIST_DIR="edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
-          mkdir -p "$DIST_DIR"
 
-          cp edg-core${{ matrix.ext }} "$DIST_DIR/"
-
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            cp victoria-metrics-prod.exe "$DIST_DIR/" || cp victoria-metrics.exe "$DIST_DIR/victoria-metrics-prod.exe"
-          else
-            cp victoria-metrics-prod "$DIST_DIR/" || cp victoria-metrics "$DIST_DIR/victoria-metrics-prod"
-          fi
-
-          cp -r configs "$DIST_DIR/"
-          cp scripts/install.sh "$DIST_DIR/"
-          cp README.md "$DIST_DIR/"
-          cp THIRD_PARTY_LICENSES.md "$DIST_DIR/"
+          # Shared with scripts/install-smoke.sh, which builds a bundle the
+          # same way and then installs from it in CI. Keeping one script means
+          # the tested path and the shipped path cannot drift.
+          scripts/build-bundle.sh "$DIST_DIR" "${{ matrix.ext }}"
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
             zip -r "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$DIST_DIR"
           else
-            tar -czvf "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$DIST_DIR"
+            tar -czf "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$DIST_DIR"
           fi
 
       - name: Upload Release Assets

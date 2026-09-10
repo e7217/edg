@@ -124,10 +124,15 @@ cd edg-v0.1.0-linux-amd64
 Each artifact should contain:
 - `edg-core` (or `edg-core.exe` for Windows)
 - `victoria-metrics-prod` binary
-- `configs/` directory
+- `configs/` directory (from `deploy/configs`)
+- `templates/` directory
 - `install.sh` script
 - `README.md`
 - `THIRD_PARTY_LICENSES.md`
+
+`scripts/build-bundle.sh` asserts all of these before the archive is created,
+and `scripts/install-smoke.sh` runs the same script in CI and installs from the
+result, so a missing file fails the build rather than reaching a user.
 
 ### 6. Test Version Information in Release Build
 
