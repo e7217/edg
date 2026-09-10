@@ -81,8 +81,21 @@ If you are not using systemd, you can start components manually:
 ### Custom Installation Directory
 
 ```bash
-INSTALL_DIR=/custom/path ./install.sh
+sudo INSTALL_DIR=/srv/edg ./install.sh
 ```
+
+The staging and production configs name their data and template directories
+absolutely, so that the same command run from a different working directory
+cannot quietly open a different database. The installer rewrites those paths to
+the chosen root and refuses to finish if any of them still point at `/opt/edg`,
+so a relocated install never ends up split across two directories.
+
+### Re-running the Installer
+
+Upgrading is `./install.sh` again over the same root. It never overwrites a
+config you have edited: an unchanged file is replaced, a changed one is kept
+and the shipped version is written beside it as `<name>.new` for you to merge.
+The installer lists anything it preserved.
 
 ### Where Data Lives
 

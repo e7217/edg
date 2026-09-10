@@ -74,19 +74,50 @@ case "$target" in
   *) fail "config.yaml points at $target, not the prod config" ;;
 esac
 
-# Run the installed binary the way the unit does and read back which config it
-# resolved. -check-constraints exits without starting listeners.
-log=$("$INSTALL_DIR/bin/edg-core" -config "$INSTALL_DIR/config.yaml" -check-constraints 2>&1 || true)
+# Run the installed binary the way the unit does. -check-constraints opens the
+# database and reads the template directory, then exits -- so it exercises
+# every path the config actually names.
+#
+# The exit status is asserted, not discarded. An earlier version of this test
+# swallowed it with `|| true` and printed OK while the binary it had just
+# installed died on `mkdir /opt/edg: permission denied`.
+set +e
+log=$("$INSTALL_DIR/bin/edg-core" -config "$INSTALL_DIR/config.yaml" -check-constraints 2>&1)
+rc=$?
+set -e
+[ $rc -eq 0 ] || { echo "$log"; fail "the installed binary exited $rc; the install is not usable"; }
+
 echo "$log" | grep -q "\[Config\] loaded $INSTALL_DIR/config.yaml" \
   || { echo "$log"; fail "the installed binary did not report loading the installed config"; }
 echo "$log" | grep -q "using built-in defaults" \
   && fail "the installed binary fell back to defaults despite being given a config"
 
+echo "==> the install is hermetic: nothing was written outside INSTALL_DIR"
+# The shipped prod config names an absolute root. If relocation did not rewrite
+# it, the binary above would have created its database somewhere else entirely
+# -- on a machine where that path is writable, silently.
+grep -rn "/opt/edg" "$INSTALL_DIR/configs" \
+  && fail "the installed config still names /opt/edg after relocating to $INSTALL_DIR"
+[ -d "$INSTALL_DIR/data" ] || fail "no data directory under the install root; the config points elsewhere"
+
+echo "==> re-running the installer preserves an edited config"
+marker="# smoke-test-edit-do-not-remove"
+printf '\n%s\n' "$marker" | tee -a "$INSTALL_DIR/configs/core/config.prod.yaml" > /dev/null
+EDG_SKIP_SYSTEMD=1 INSTALL_DIR="$INSTALL_DIR" EDG_ENV=prod "$EXTRACTED/install.sh" > "$WORK/reinstall.log" 2>&1 \
+  || { cat "$WORK/reinstall.log"; fail "re-running install.sh failed"; }
+grep -q "$marker" "$INSTALL_DIR/configs/core/config.prod.yaml" \
+  || fail "re-running install.sh discarded an operator edit to the active config"
+[ -f "$INSTALL_DIR/configs/core/config.prod.yaml.new" ] \
+  || fail "the shipped config was not left alongside as .new for the operator to merge"
+
 echo "==> discovery from the install root (no -config, as a manual start would)"
-log=$(cd "$INSTALL_DIR" && ./bin/edg-core -check-constraints 2>&1 || true)
+set +e
+log=$(cd "$INSTALL_DIR" && ./bin/edg-core -check-constraints 2>&1)
+set -e
 # /opt/edg/config.yaml is the only absolute entry in the search path, so a
 # relocated install cannot be discovered -- it must say so rather than pretend.
 echo "$log" | grep -qE "\[Config\] (loaded|no config file found)" \
   || { echo "$log"; fail "the binary said nothing about which config it resolved"; }
 
-echo "OK: the bundle builds, installs, and the installed config is the one that loads."
+echo "OK: the bundle builds and installs; the installed config is the one that loads, the"
+echo "    install runs entirely within its own root, and a re-install keeps operator edits."

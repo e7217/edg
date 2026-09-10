@@ -56,6 +56,64 @@ for candidate in victoria-metrics-prod victoria-metrics-prod.exe; do
 done
 [ -n "$VM_BIN" ] || die "no victoria-metrics-prod binary in the bundle at $BUNDLE_DIR"
 
+# DEFAULT_ROOT is what the shipped staging and production configs hardcode.
+# They are absolute on purpose: a relative data_dir would follow the working
+# directory, so the same command run from elsewhere would quietly open a
+# different database. The price is that relocating the install root means
+# rewriting them, which is what relocate_paths does.
+DEFAULT_ROOT="/opt/edg"
+
+# relocate_paths rewrites DEFAULT_ROOT to INSTALL_DIR in a config file, using
+# bash substitution rather than sed so a path containing sed metacharacters
+# cannot corrupt the result.
+relocate_paths() {
+    local src="$1" dst="$2" line out=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        out+="${line//$DEFAULT_ROOT/$INSTALL_DIR}"$'\n'
+    done < "$src"
+    printf '%s' "$out" | priv tee "$dst" > /dev/null
+}
+
+# install_configs copies the shipped configs, relocating absolute paths when
+# the install root moved, and never silently overwriting a config an operator
+# has edited -- the linked config.yaml points into this directory, so
+# clobbering it would discard their changes with no warning.
+install_configs() {
+    local rel dst preserved=()
+    while IFS= read -r rel; do
+        dst="$INSTALL_DIR/configs/$rel"
+        priv mkdir -p "$(dirname "$dst")"
+
+        if [ -e "$dst" ]; then
+            if [ "$INSTALL_DIR" != "$DEFAULT_ROOT" ]; then
+                relocate_paths "$BUNDLE_DIR/configs/$rel" "$dst.new"
+            else
+                priv cp "$BUNDLE_DIR/configs/$rel" "$dst.new"
+            fi
+            if priv cmp -s "$dst" "$dst.new"; then
+                priv rm -f "$dst.new"
+            else
+                preserved+=("configs/$rel")
+            fi
+            continue
+        fi
+
+        if [ "$INSTALL_DIR" != "$DEFAULT_ROOT" ]; then
+            relocate_paths "$BUNDLE_DIR/configs/$rel" "$dst"
+        else
+            priv cp "$BUNDLE_DIR/configs/$rel" "$dst"
+        fi
+    done < <(cd "$BUNDLE_DIR/configs" && find . -type f | sed 's|^\./||')
+
+    if [ ${#preserved[@]} -gt 0 ]; then
+        echo ""
+        echo "Kept your existing configuration. The shipped version of each file"
+        echo "below is alongside it with a .new suffix; merge what you want:"
+        printf '  %s\n' "${preserved[@]}"
+        echo ""
+    fi
+}
+
 echo "Installing EDG IoT Platform to $INSTALL_DIR (config: $EDG_ENV)..."
 
 priv mkdir -p "$INSTALL_DIR"/{bin,configs,data,templates}
@@ -64,7 +122,7 @@ priv cp "$BUNDLE_DIR/edg-core" "$INSTALL_DIR/bin/"
 priv cp "$BUNDLE_DIR/$VM_BIN" "$INSTALL_DIR/bin/victoria-metrics-prod"
 priv chmod +x "$INSTALL_DIR/bin/edg-core" "$INSTALL_DIR/bin/victoria-metrics-prod"
 
-priv cp -r "$BUNDLE_DIR/configs/." "$INSTALL_DIR/configs/"
+install_configs
 priv cp -r "$BUNDLE_DIR/templates/." "$INSTALL_DIR/templates/"
 
 # edg-core discovers <install root>/config.yaml. Without this link the configs
@@ -72,6 +130,14 @@ priv cp -r "$BUNDLE_DIR/templates/." "$INSTALL_DIR/templates/"
 # compiled-in defaults, so `auth.mode: strict` in the file it just installed
 # has no effect (#117). The container image does the same thing at build time.
 priv ln -sfn "$INSTALL_DIR/configs/core/config.${EDG_ENV}.yaml" "$INSTALL_DIR/config.yaml"
+
+# A relocated install that still names the default root would run split across
+# two directories: binaries here, data and templates over there. Catch it now
+# rather than at the first "template not found".
+if [ "$INSTALL_DIR" != "$DEFAULT_ROOT" ] \
+   && grep -q "$DEFAULT_ROOT" "$INSTALL_DIR/configs/core/config.${EDG_ENV}.yaml"; then
+    die "config.${EDG_ENV}.yaml still refers to $DEFAULT_ROOT after relocation to $INSTALL_DIR"
+fi
 
 # Create systemd services (Linux only, and only when we can write the unit
 # directory -- a user-local install has nowhere to register them).

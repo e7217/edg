@@ -79,6 +79,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without which every templated asset create or update is rejected with
   "template not found".
 
+- `INSTALL_DIR` now actually relocates a host install. The staging and
+  production configs name their paths absolutely, and nothing rewrote them, so
+  a relocated install put binaries in the chosen root while writing data to
+  `/opt/edg` and looking for templates in a directory that did not exist —
+  loading zero templates and rejecting every templated asset. The installer
+  rewrites the paths and refuses to finish if any still point at the default
+  root.
+
+- Re-running the installer no longer discards edited configuration. An
+  unchanged file is replaced; a changed one is kept and the shipped version is
+  written beside it as `<name>.new`.
+
 - The bundled `docker compose` stack could not start from a clean volume. The
   image bakes `config.prod.yaml`, whose data paths were `/var/lib/edg` — a
   directory nothing creates, in an image whose data volume is mounted at
