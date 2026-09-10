@@ -208,6 +208,9 @@ func main() {
 		log.Fatalf("Failed to create store: %v", err)
 	}
 	defer store.Close()
+	if cfg.Metrics.Enabled {
+		store.RegisterMetrics(metrics.Default, core.StoreMetricsOptions{})
+	}
 
 	// 5. Initialize template loader (DB-authoritative; seed from dir on empty DB)
 	loader, err := core.NewTemplateLoaderWithStore(store)

@@ -61,6 +61,7 @@ func (h *AlarmHandler) RegisterHandlers(nc *nats.Conn) error {
 func (h *AlarmHandler) handleAlarmRaised(msg *nats.Msg) {
 	var alarm Alarm
 	if err := json.Unmarshal(msg.Data, &alarm); err != nil {
+		alarmsInvalid.Inc()
 		log.Printf("[Alarm] Invalid alarm payload: %v", err)
 		return
 	}
@@ -75,13 +76,17 @@ func (h *AlarmHandler) Process(alarm Alarm) error {
 	}
 	alarm = normalizeAlarm(alarm)
 	if err := validateAlarm(alarm); err != nil {
+		alarmsInvalid.Inc()
 		return err
 	}
+	alarmsReceived.With(string(alarm.Severity)).Inc()
 
 	impact, err := h.ComputeImpact(alarm)
 	if err != nil {
+		alarmImpactFailures.Inc()
 		return err
 	}
+	alarmImpactAffected.Observe(float64(len(impact.AffectedAssets)))
 	h.publisher.PublishAlarmImpactComputed(impact)
 
 	if h.aggregator != nil {

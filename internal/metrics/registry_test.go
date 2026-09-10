@@ -295,3 +295,79 @@ func TestCounterVecWithoutLegacyDoesNotPublish(t *testing.T) {
 		t.Errorf("NewCounterVec published %T to the expvar global", v)
 	}
 }
+
+func TestCounterVec2(t *testing.T) {
+	r := NewRegistry()
+	v := r.NewCounterVec2(Desc{Name: "edg_test_http_requests_total", Help: "h."},
+		"route", []string{"/a", "/b"},
+		"class", []string{"2xx", "5xx"})
+
+	v.With("/a", "2xx").Add(3)
+	v.With("/b", "5xx").Inc()
+
+	// 3 routes x 3 classes, both including "other".
+	if got := v.series(); got != 9 {
+		t.Errorf("series() = %d, want 9", got)
+	}
+
+	out := string(r.Gather())
+	for _, want := range []string{
+		`edg_test_http_requests_total{route="/a",class="2xx"} 3`,
+		`edg_test_http_requests_total{route="/b",class="5xx"} 1`,
+		`edg_test_http_requests_total{route="other",class="other"} 0`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+// Unknown values on either axis must fold, not multiply. This is the guard
+// against a path parameter leaking into the route label.
+func TestCounterVec2FoldsUnknownValues(t *testing.T) {
+	r := NewRegistry()
+	v := r.NewCounterVec2(Desc{Name: "edg_test_http_requests_total", Help: "h."},
+		"route", []string{"/a"}, "class", []string{"2xx"})
+
+	before := r.SeriesCount()
+	for i := 0; i < 500; i++ {
+		v.With(fmt.Sprintf("/assets/asset-%d", i), "2xx").Inc()
+		v.With("/a", fmt.Sprintf("%d", i)).Inc()
+	}
+	if after := r.SeriesCount(); after != before {
+		t.Fatalf("unknown label values changed the series count %d -> %d", before, after)
+	}
+
+	out := string(r.Gather())
+	if strings.Contains(out, "asset-0") {
+		t.Errorf("an unknown route leaked into the exposition:\n%s", out)
+	}
+	if !strings.Contains(out, `edg_test_http_requests_total{route="other",class="2xx"} 500`) {
+		t.Errorf("unknown routes did not fold into other:\n%s", out)
+	}
+	if !strings.Contains(out, `edg_test_http_requests_total{route="/a",class="other"} 500`) {
+		t.Errorf("unknown classes did not fold into other:\n%s", out)
+	}
+	if !strings.Contains(out, `edg_core_metrics_label_rejected_total{metric="edg_test_http_requests_total"} 1000`) {
+		t.Errorf("rejections were not reported:\n%s", out)
+	}
+}
+
+func TestCounterVec2Budget(t *testing.T) {
+	routes := make([]string, 60)
+	for i := range routes {
+		routes[i] = fmt.Sprintf("/r%d", i)
+	}
+	mustPanic(t, "budget", func() {
+		// 61 routes x 5 classes = 305, over the 256 budget.
+		NewRegistry().NewCounterVec2(Desc{Name: "edg_test_http_requests_total", Help: "h."},
+			"route", routes, "class", []string{"2xx", "3xx", "4xx", "5xx"})
+	})
+}
+
+func TestCounterVec2RejectsRepeatedLabel(t *testing.T) {
+	mustPanic(t, "twice", func() {
+		NewRegistry().NewCounterVec2(Desc{Name: "edg_test_vec2_total", Help: "h."},
+			"route", []string{"a"}, "route", []string{"b"})
+	})
+}

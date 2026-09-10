@@ -419,3 +419,107 @@ func TestMetricCardinalityBudget(t *testing.T) {
 	assert.NotContains(t, out, "plant-a/line-", "an asset id reached the exposition")
 	assert.NotContains(t, out, "tag-", "a tag name reached the exposition")
 }
+
+func TestStoreMetrics(t *testing.T) {
+	store := newMetricsTestStore(t)
+	require.NoError(t, store.CreateAsset(&Asset{ID: "a1", Name: "A1", TemplateName: "sensor"}))
+	require.NoError(t, store.CreateAsset(&Asset{ID: "a2", Name: "A2", TemplateName: "sensor"}))
+
+	r := metrics.NewRegistry()
+	store.RegisterMetrics(r, StoreMetricsOptions{})
+	out := string(r.Gather())
+
+	for _, name := range []string{
+		"edg_core_store_connections_open",
+		"edg_core_store_connections_in_use",
+		"edg_core_store_connections_idle",
+		"edg_core_store_connection_waits_total",
+		"edg_core_store_connection_wait_seconds_total",
+	} {
+		assert.Contains(t, out, name+" ", "%s missing", name)
+	}
+	assert.Contains(t, out, "edg_core_store_assets 2")
+	assert.Contains(t, out, "edg_core_store_relations 0")
+}
+
+// The counts share the single SQLite handle with the ingest path, and
+// /metrics is unauthenticated on the monitoring port. Without a cache, a
+// remote caller could force two table scans per request.
+func TestStoreCountsAreCached(t *testing.T) {
+	store := newMetricsTestStore(t)
+	require.NoError(t, store.CreateAsset(&Asset{ID: "a1", Name: "A1", TemplateName: "sensor"}))
+
+	counts := &cachedStoreCounts{store: store, ttl: time.Hour, timeout: time.Second}
+	require.Equal(t, 1, counts.get().assets)
+
+	require.NoError(t, store.CreateAsset(&Asset{ID: "a2", Name: "A2", TemplateName: "sensor"}))
+	assert.Equal(t, 1, counts.get().assets, "a second asset was reported before the TTL expired")
+
+	// Expiring the entry must let the new value through.
+	counts.mu.Lock()
+	counts.fetched = time.Now().Add(-2 * time.Hour)
+	counts.mu.Unlock()
+	assert.Equal(t, 2, counts.get().assets)
+}
+
+// A failed count says nothing about how many assets exist, so the previous
+// value must stand rather than collapsing to zero.
+func TestStoreCountsHoldLastValueOnError(t *testing.T) {
+	store := newMetricsTestStore(t)
+	require.NoError(t, store.CreateAsset(&Asset{ID: "a1", Name: "A1", TemplateName: "sensor"}))
+
+	counts := &cachedStoreCounts{store: store, ttl: time.Millisecond, timeout: time.Second}
+	require.Equal(t, 1, counts.get().assets)
+
+	beforeFailures := storeQueryFailures.Value()
+	require.NoError(t, store.Close())
+	time.Sleep(2 * time.Millisecond) // let the TTL lapse
+
+	assert.Equal(t, 1, counts.get().assets, "a closed database reported zero assets")
+	assert.Greater(t, storeQueryFailures.Value(), beforeFailures, "the failure was not counted")
+}
+
+func TestAlarmMetrics(t *testing.T) {
+	store := newMetricsTestStore(t)
+	require.NoError(t, store.CreateAsset(&Asset{ID: "alarm-asset", Name: "A", TemplateName: "sensor"}))
+
+	beforeCritical := vecValue(t, "edg_core_alarm_received_total", "severity", "critical")
+	beforeInvalid := alarmsInvalid.Value()
+	beforeImpact := histCount(t, "edg_core_alarm_impact_affected_assets")
+	beforeLCA := alarmLCAQueries.Value()
+
+	handler := NewAlarmHandler(store, NewEventPublisher(nil), AlarmHandlerOptions{Window: time.Hour})
+	require.NoError(t, handler.Process(Alarm{
+		ID: "alarm-1", AssetID: "alarm-asset", Severity: SeverityCritical, Message: "hot",
+	}))
+
+	assert.Equal(t, beforeCritical+1, vecValue(t, "edg_core_alarm_received_total", "severity", "critical"))
+	assert.Equal(t, beforeImpact+1, histCount(t, "edg_core_alarm_impact_affected_assets"))
+	assert.Equal(t, int64(1), alarmGroupsPending.Value(), "the open group must be visible while the window is running")
+
+	// A second alarm searches the open group, which is where the per-alarm
+	// cost lives.
+	require.NoError(t, handler.Process(Alarm{
+		ID: "alarm-2", AssetID: "alarm-asset", Severity: SeverityWarning, Message: "warm",
+	}))
+	assert.Greater(t, alarmLCAQueries.Value(), beforeLCA,
+		"the ancestor query run under the aggregator lock was not counted")
+
+	// An alarm with no asset id fails validation and must be counted as
+	// invalid rather than received.
+	assert.Error(t, handler.Process(Alarm{ID: "alarm-3", Severity: SeverityInfo}))
+	assert.Equal(t, beforeInvalid+1, alarmsInvalid.Value())
+}
+
+// An alarm naming an unknown asset is an impact failure, not a validation
+// failure: the payload was well formed, the plant model was not.
+func TestAlarmImpactFailureMetric(t *testing.T) {
+	store := newMetricsTestStore(t)
+	before := alarmImpactFailures.Value()
+
+	handler := NewAlarmHandler(store, NewEventPublisher(nil), AlarmHandlerOptions{Window: time.Hour})
+	assert.Error(t, handler.Process(Alarm{
+		ID: "alarm-x", AssetID: "no-such-asset", Severity: SeverityInfo, Message: "?",
+	}))
+	assert.Equal(t, before+1, alarmImpactFailures.Value())
+}

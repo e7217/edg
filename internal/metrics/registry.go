@@ -186,9 +186,10 @@ func (r *Registry) SeriesCount() int {
 // It keeps its own slice rather than walking the registry so that counting
 // series never re-enters the registry lock.
 type rejectionCollector struct {
-	d    Desc
-	mu   sync.RWMutex
-	vecs []*CounterVec
+	d     Desc
+	mu    sync.RWMutex
+	vecs  []*CounterVec
+	vecs2 []*CounterVec2
 }
 
 func (c *rejectionCollector) track(v *CounterVec) {
@@ -197,21 +198,38 @@ func (c *rejectionCollector) track(v *CounterVec) {
 	c.mu.Unlock()
 }
 
+func (c *rejectionCollector) track2(v *CounterVec2) {
+	c.mu.Lock()
+	c.vecs2 = append(c.vecs2, v)
+	c.mu.Unlock()
+}
+
 func (c *rejectionCollector) desc() Desc { return c.d }
 
 func (c *rejectionCollector) series() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.vecs)
+	return len(c.vecs) + len(c.vecs2)
 }
 
 func (c *rejectionCollector) write(buf *[]byte, name string) {
 	c.mu.RLock()
-	vecs := append([]*CounterVec(nil), c.vecs...)
+	type entry struct {
+		name     string
+		rejected int64
+	}
+	entries := make([]entry, 0, len(c.vecs)+len(c.vecs2))
+	for _, v := range c.vecs {
+		entries = append(entries, entry{v.d.Name, v.rejected.Value()})
+	}
+	for _, v := range c.vecs2 {
+		entries = append(entries, entry{v.d.Name, v.rejected.Value()})
+	}
 	c.mu.RUnlock()
-	sort.Slice(vecs, func(i, j int) bool { return vecs[i].d.Name < vecs[j].d.Name })
-	for _, v := range vecs {
-		writeLabelledSample(buf, name, "metric", v.d.Name, v.rejected.Value())
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+	for _, e := range entries {
+		writeLabelledSample(buf, name, "metric", e.name, e.rejected)
 	}
 }
 

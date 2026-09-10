@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/e7217/edg/internal/core"
+	"github.com/e7217/edg/internal/metrics"
 	"github.com/e7217/edg/internal/webui"
 )
 
@@ -122,7 +123,103 @@ func (s *Server) buildHandler() http.Handler {
 	if s.options.WebUIEnabled {
 		mux.Handle("GET /", http.FileServerFS(webui.FS()))
 	}
-	return s.cors(s.auth(mux))
+	// instrument wraps the mux directly, not each handler: Go 1.22 fills in
+	// r.Pattern during ServeHTTP, so reading it afterwards gives the matched
+	// route without touching twenty-two handlers. It sits inside auth so a
+	// 401 short circuit is counted by unauthorizedTotal instead of arriving
+	// here with no pattern.
+	return s.cors(s.auth(instrument(mux)))
+}
+
+// routeLabels is the closed set of route label values. It is derived from the
+// patterns registered above; anything else folds into "other", which is what
+// makes a path parameter incapable of becoming a series.
+var routeLabels = []string{
+	"GET /api/v1/health",
+	"GET /api/v1/version",
+	"GET /api/v1/assets",
+	"GET /api/v1/assets/{id}",
+	"GET /api/v1/assets/{id}/ancestors",
+	"GET /api/v1/assets/{id}/descendants",
+	"GET /api/v1/assets/{id}/subtree",
+	"GET /api/v1/assets/{id}/connected",
+	"GET /api/v1/assets/{id}/adapters",
+	"GET /api/v1/relations",
+	"GET /api/v1/templates",
+	"GET /api/v1/templates/{name}",
+	"GET /api/v1/constraints",
+	"GET /api/v1/adapters",
+	"GET /api/v1/adapters/drift",
+	"GET /api/v1/adapters/{id}",
+	"POST /api/v1/assets",
+	"PUT /api/v1/assets/{id}",
+	"DELETE /api/v1/assets/{id}",
+	"POST /api/v1/relations",
+	"DELETE /api/v1/relations/{id}",
+	"GET /",
+}
+
+var (
+	httpRequests = metrics.Default.NewCounterVec2(metrics.Desc{
+		Name: "edg_core_http_requests_total",
+		Help: "HTTP API requests by matched route pattern and response class. route=other means no pattern matched (a 404).",
+	}, "route", routeLabels, "class", []string{"2xx", "3xx", "4xx", "5xx"})
+
+	httpUnauthorized = metrics.Default.NewCounterVec(metrics.Desc{
+		Name: "edg_core_http_unauthorized_total",
+		Help: "Requests rejected with 401. write_without_token means no bearer token is configured at all, so every write is refused; see #107.",
+	}, "reason", []string{authReasonWriteWithoutToken, authReasonBadToken})
+)
+
+const (
+	authReasonWriteWithoutToken = "write_without_token"
+	authReasonBadToken          = "bad_token"
+)
+
+// statusRecorder captures the status code for the route counter.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusRecorder) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK // an implicit 200, as net/http would send
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func instrument(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		if rec.status == 0 {
+			rec.status = http.StatusOK
+		}
+		httpRequests.With(r.Pattern, statusClass(rec.status)).Inc()
+	})
+}
+
+// statusClass buckets a status code. Codes outside 2xx-5xx fold into "other"
+// at the Vec, which is where a 1xx would land.
+func statusClass(status int) string {
+	switch status / 100 {
+	case 2:
+		return "2xx"
+	case 3:
+		return "3xx"
+	case 4:
+		return "4xx"
+	case 5:
+		return "5xx"
+	default:
+		return "other"
+	}
 }
 
 func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
@@ -326,6 +423,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			// Reads stay open when no token is configured, but writes are never
 			// anonymous: they require a non-empty bearer token.
 			if isWriteMethod(r.Method) {
+				httpUnauthorized.With(authReasonWriteWithoutToken).Inc()
 				writeError(w, http.StatusUnauthorized, "write access requires a configured bearer token")
 				return
 			}
@@ -333,6 +431,7 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			return
 		}
 		if r.Header.Get("Authorization") != "Bearer "+s.options.Token {
+			httpUnauthorized.With(authReasonBadToken).Inc()
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}

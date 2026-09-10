@@ -9,6 +9,11 @@ import (
 	"sync/atomic"
 )
 
+// otherLabelValue is where a label value outside the declared set is folded.
+// It is a real series rather than a drop, so the events are still counted --
+// they just cannot multiply the cardinality.
+const otherLabelValue = "other"
+
 // DefaultLatencyBounds are the bucket bounds for the request-shaped latencies
 // in this process (data handling, sink writes, ancestor lookups).
 //
@@ -177,7 +182,7 @@ func (v *CounterVec) write(buf *[]byte, name string) {
 	for _, value := range v.order {
 		writeLabelledSample(buf, name, v.label, value, v.children[value].Value())
 	}
-	writeLabelledSample(buf, name, v.label, "other", v.other.Value())
+	writeLabelledSample(buf, name, v.label, otherLabelValue, v.other.Value())
 }
 
 // Gauge is a value that can go up and down.
@@ -508,4 +513,95 @@ func (g *InfoGauge) write(buf *[]byte, name string) {
 		*buf = append(*buf, '"')
 	}
 	*buf = append(*buf, '}', ' ', '1', '\n')
+}
+
+// CounterVec2 is a counter family over two labels, both with closed value sets.
+//
+// Like CounterVec it materialises the whole cross product at registration, so
+// the series count is a compile-time property and With2 is two map reads.
+type CounterVec2 struct {
+	d        Desc
+	labelA   string
+	labelB   string
+	orderA   []string
+	orderB   []string
+	children map[string]map[string]*Counter
+	rejected *expvar.Int
+}
+
+// NewCounterVec2 registers a two-label counter family.
+func (r *Registry) NewCounterVec2(d Desc, labelA string, allowedA []string, labelB string, allowedB []string) *CounterVec2 {
+	d.Type = TypeCounter
+	checkLabel(d.Name, labelA)
+	checkLabel(d.Name, labelB)
+	if labelA == labelB {
+		panic(fmt.Sprintf("metrics: %s uses the label %q twice", d.Name, labelA))
+	}
+
+	orderA := append(append([]string(nil), allowedA...), otherLabelValue)
+	orderB := append(append([]string(nil), allowedB...), otherLabelValue)
+	sort.Strings(orderA)
+	sort.Strings(orderB)
+	if n := len(orderA) * len(orderB); n > maxSeriesPerVec {
+		panic(fmt.Sprintf("metrics: %s would create %d series, over the %d budget", d.Name, n, maxSeriesPerVec))
+	}
+
+	v := &CounterVec2{
+		d:        d,
+		labelA:   labelA,
+		labelB:   labelB,
+		orderA:   orderA,
+		orderB:   orderB,
+		children: make(map[string]map[string]*Counter, len(orderA)),
+		rejected: new(expvar.Int),
+	}
+	for _, a := range orderA {
+		row := make(map[string]*Counter, len(orderB))
+		for _, b := range orderB {
+			row[b] = &Counter{d: d, v: new(expvar.Int)}
+		}
+		v.children[a] = row
+	}
+	r.add(d, v)
+	r.rejections.track2(v)
+	return v
+}
+
+// With returns the child for a pair of label values, folding unknown values
+// into "other".
+func (v *CounterVec2) With(a, b string) *Counter {
+	row, ok := v.children[a]
+	if !ok {
+		v.rejected.Add(1)
+		row = v.children[otherLabelValue]
+		a = otherLabelValue
+	}
+	c, ok := row[b]
+	if !ok {
+		v.rejected.Add(1)
+		c = row[otherLabelValue]
+	}
+	return c
+}
+
+func (v *CounterVec2) desc() Desc  { return v.d }
+func (v *CounterVec2) series() int { return len(v.orderA) * len(v.orderB) }
+
+func (v *CounterVec2) write(buf *[]byte, name string) {
+	for _, a := range v.orderA {
+		for _, b := range v.orderB {
+			*buf = append(*buf, name...)
+			*buf = append(*buf, '{')
+			*buf = append(*buf, v.labelA...)
+			*buf = append(*buf, '=', '"')
+			*buf = appendEscapedLabelValue(*buf, a)
+			*buf = append(*buf, '"', ',')
+			*buf = append(*buf, v.labelB...)
+			*buf = append(*buf, '=', '"')
+			*buf = appendEscapedLabelValue(*buf, b)
+			*buf = append(*buf, '"', '}', ' ')
+			*buf = appendInt(*buf, v.children[a][b].Value())
+			*buf = append(*buf, '\n')
+		}
+	}
 }
