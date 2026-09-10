@@ -107,22 +107,30 @@ jobs:
           fi
 
       - name: Upload Release Assets
-        # v2, not v1: v1 prefers GITHUB_REF over the tag_name input, so a
-        # dispatched or called run tried to attach assets to a release named
-        # `refs/heads/main` and failed with "Resource not accessible by
-        # integration".
-        uses: softprops/action-gh-release@v2
-        with:
-          # Explicit, because there is no tag ref to infer it from when this
-          # workflow is called rather than triggered by a tag push.
-          tag_name: ${{ inputs.tag }}
-          # Exactly this leg's archive. A wildcard over both extensions warned
-          # about the one that never matches on each platform, which is the
-          # kind of routine warning that hides a real one.
-          files: edg-${{ inputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.*
-          # A release that silently ships nothing is the defect this whole
-          # workflow was just fixed for. Fail instead.
-          fail_on_unmatched_files: true
+        # Uploaded with gh rather than softprops/action-gh-release.
+        #
+        # That action derives the release from GITHUB_REF and only partly
+        # honours tag_name. On a workflow that runs from a branch ref -- which
+        # this one now does, because the tag trigger could never fire -- v1
+        # attached to `refs/heads/main` outright, and v2 found the right
+        # release and then still failed updating it, reporting
+        # `Resource not accessible by integration` with Contents: write in
+        # hand. gh takes the tag as an argument and infers nothing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive=$(find . -maxdepth 1 -type f \
+            -name "edg-${{ inputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.*" | head -1)
+          if [ -z "$archive" ]; then
+            echo "::error::no archive built for ${{ matrix.goos }}/${{ matrix.goarch }}"
+            ls -1
+            exit 1
+          fi
+          # --clobber so a re-dispatch replaces an asset instead of failing.
+          gh release upload "${{ inputs.tag }}" "$archive" \
+            --clobber --repo "${{ github.repository }}"
+          echo "uploaded $(basename "$archive")"
 
   # The build legs can each succeed while the release still ends up with
   # nothing attached -- that is exactly how v0.1.0 shipped empty. Assert the
