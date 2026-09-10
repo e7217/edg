@@ -83,6 +83,7 @@ type Registry struct {
 	names      map[string]bool
 
 	rejections *rejectionCollector
+	preGather  []func()
 }
 
 // NewRegistry builds a registry pre-loaded with its own self-observation
@@ -100,6 +101,18 @@ func NewRegistry() *Registry {
 		Help: "Time series currently exposed by this process.",
 	}, func() float64 { return float64(r.SeriesCount()) })
 	return r
+}
+
+// BeforeGather registers a hook run once at the start of every Gather.
+//
+// It exists so that a subsystem read as several metrics -- runtime/metrics,
+// /proc, a pool snapshot -- is sampled once per scrape instead of once per
+// series, which is both cheaper and internally consistent: every derived
+// metric then describes the same instant.
+func (r *Registry) BeforeGather(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.preGather = append(r.preGather, fn)
 }
 
 func (r *Registry) add(d Desc, c collector) {
@@ -125,7 +138,12 @@ func (r *Registry) add(d Desc, c collector) {
 func (r *Registry) Gather() []byte {
 	r.mu.RLock()
 	collectors := append([]collector(nil), r.collectors...)
+	hooks := append([]func(){}, r.preGather...)
 	r.mu.RUnlock()
+
+	for _, fn := range hooks {
+		fn()
+	}
 
 	sort.Slice(collectors, func(i, j int) bool {
 		return collectors[i].desc().Name < collectors[j].desc().Name

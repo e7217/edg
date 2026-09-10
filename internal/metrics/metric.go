@@ -355,3 +355,118 @@ func checkLabel(metric, label string) {
 		panic(fmt.Sprintf("metrics: label %q is unbounded in this system; see the cardinality note in ADR 0002 (metric %s)", label, metric))
 	}
 }
+
+// HistogramSnapshot is a cumulative histogram sampled from somewhere that
+// already keeps one, such as runtime/metrics.
+type HistogramSnapshot struct {
+	// Cumulative[i] is the number of samples <= the collector's bounds[i]. It
+	// must be non-decreasing and every entry must be <= Count.
+	Cumulative []uint64
+	Count      uint64
+	// Sum is exposed as _sum only when HasSum is set. runtime/metrics reports
+	// no sum for its histograms, and an estimate from bucket midpoints would
+	// look authoritative while being wrong, so those families omit it -- which
+	// the exposition format permits.
+	Sum    float64
+	HasSum bool
+}
+
+// FuncHistogram exposes a cumulative histogram owned by another subsystem.
+type FuncHistogram struct {
+	d      Desc
+	bounds []float64
+	fn     func() HistogramSnapshot
+}
+
+// NewFuncHistogram registers a histogram read at scrape time.
+func (r *Registry) NewFuncHistogram(d Desc, bounds []float64, fn func() HistogramSnapshot) *FuncHistogram {
+	d.Type = TypeHistogram
+	if len(bounds) == 0 || !sort.Float64sAreSorted(bounds) {
+		panic(fmt.Sprintf("metrics: histogram %s needs non-empty ascending bounds", d.Name))
+	}
+	h := &FuncHistogram{d: d, bounds: append([]float64(nil), bounds...), fn: fn}
+	r.add(d, h)
+	return h
+}
+
+func (h *FuncHistogram) desc() Desc { return h.d }
+
+func (h *FuncHistogram) series() int {
+	n := len(h.bounds) + 2 // buckets, +Inf, _count
+	if h.fn().HasSum {
+		n++
+	}
+	return n
+}
+
+func (h *FuncHistogram) write(buf *[]byte, name string) {
+	snap := h.fn()
+	for i, bound := range h.bounds {
+		var c uint64
+		if i < len(snap.Cumulative) {
+			c = snap.Cumulative[i]
+		}
+		*buf = append(*buf, name...)
+		*buf = append(*buf, `_bucket{le="`...)
+		*buf = appendFloat(*buf, bound)
+		*buf = append(*buf, '"', '}', ' ')
+		*buf = appendUint(*buf, c)
+		*buf = append(*buf, '\n')
+	}
+	*buf = append(*buf, name...)
+	*buf = append(*buf, `_bucket{le="+Inf"} `...)
+	*buf = appendUint(*buf, snap.Count)
+	*buf = append(*buf, '\n')
+
+	if snap.HasSum {
+		*buf = append(*buf, name...)
+		*buf = append(*buf, "_sum "...)
+		*buf = appendFloat(*buf, snap.Sum)
+		*buf = append(*buf, '\n')
+	}
+
+	*buf = append(*buf, name...)
+	*buf = append(*buf, "_count "...)
+	*buf = appendUint(*buf, snap.Count)
+	*buf = append(*buf, '\n')
+}
+
+// InfoGauge is a constant-1 gauge carrying build or version labels, the
+// standard way to make static strings queryable in a TSDB.
+type InfoGauge struct {
+	d      Desc
+	labels []string // alternating name, value
+}
+
+// NewInfoGauge registers an info metric. labels alternate name and value and
+// are fixed for the life of the process.
+func (r *Registry) NewInfoGauge(d Desc, labels ...string) *InfoGauge {
+	d.Type = TypeGauge
+	if len(labels)%2 != 0 {
+		panic(fmt.Sprintf("metrics: %s got an odd number of label arguments", d.Name))
+	}
+	for i := 0; i < len(labels); i += 2 {
+		checkLabel(d.Name, labels[i])
+	}
+	g := &InfoGauge{d: d, labels: append([]string(nil), labels...)}
+	r.add(d, g)
+	return g
+}
+
+func (g *InfoGauge) desc() Desc  { return g.d }
+func (g *InfoGauge) series() int { return 1 }
+
+func (g *InfoGauge) write(buf *[]byte, name string) {
+	*buf = append(*buf, name...)
+	*buf = append(*buf, '{')
+	for i := 0; i < len(g.labels); i += 2 {
+		if i > 0 {
+			*buf = append(*buf, ',')
+		}
+		*buf = append(*buf, g.labels[i]...)
+		*buf = append(*buf, '=', '"')
+		*buf = appendEscapedLabelValue(*buf, g.labels[i+1])
+		*buf = append(*buf, '"')
+	}
+	*buf = append(*buf, '}', ' ', '1', '\n')
+}
