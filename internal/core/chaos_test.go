@@ -104,7 +104,13 @@ func TestChaosDataHandler_ConcurrentUndeclaredPassThrough(t *testing.T) {
 	assets, err := store.ListAssets()
 	require.NoError(t, err)
 	assert.Len(t, assets, 0)
-	assert.Equal(t, 100, handler.GetDataCount())
+
+	// All 100 reached the stream. That is a stronger claim than the old
+	// in-memory count: it says the data is durable, not merely appended to a
+	// slice nothing read.
+	info, err := js.StreamInfo("RACE_TEST")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(100), info.State.Msgs)
 }
 
 func assetDataMessage(t *testing.T, assetID string, value float64) *nats.Msg {

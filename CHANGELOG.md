@@ -106,6 +106,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Removed the in-memory buffer in `DataHandler` that retained every message
+  the process had ever received. Nothing read the entries; storage is
+  JetStream and the VictoriaMetrics sink. On a gateway sized for 512 MB it was
+  hundreds of megabytes a day of pure leak (#115).
+
 - The release bundle could not be built, and the installer it ships could not
   run. `.github/workflows/release.yml` copied a top-level `configs/` directory
   that has not existed since the deployment reorganisation, and

@@ -99,7 +99,6 @@ func TestIngestMetrics_SuccessPath(t *testing.T) {
 	assert.Equal(t, before[2]+1, histCount(t, "edg_core_data_handle_seconds"), "handle histogram")
 	assert.Equal(t, beforeNumber+1, vecValue(t, "edg_core_data_values_total", "kind", "number"))
 	assert.Equal(t, beforeText+1, vecValue(t, "edg_core_data_values_total", "kind", "text"))
-	assert.Equal(t, int64(1), dataBufferEntries.Value(), "buffer gauge tracks the PoC slice")
 }
 
 // A message that cannot be decoded must move the decode counter and nothing
