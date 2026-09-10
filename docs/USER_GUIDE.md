@@ -71,9 +71,14 @@ Everything EDG writes sits under one install root, `/opt/edg` by default:
 | `/opt/edg/data` | `metadata.db`, `jetstream/`, `nats-credentials.json` (`storage.data_dir`) |
 
 The Docker image builds the same layout, and `deploy/docker/compose.yml` mounts
-its `edg-data` volume at `/opt/edg/data`. **Back that one directory up and you
-have the whole gateway**: master data, the JetStream backlog and the NATS role
-credentials. Nothing of value is written outside it.
+its `edg-data` volume at `/opt/edg/data`. **Back that directory up and you have
+the gateway's configuration and its in-flight data**: master data, the
+JetStream backlog and the NATS role credentials.
+
+It is not a complete backup. The measurements themselves live in
+VictoriaMetrics, which is a separate `vm-data` volume in the compose stack and
+`/opt/edg/data/victoria-metrics` in a host install. Back up both, or you keep
+the plant model and lose every reading it describes.
 
 To check the stack after a change to the compose file or the image, run
 `scripts/compose-smoke.sh` — it boots the stack, waits for the healthcheck,
