@@ -6,7 +6,7 @@ This document contains the license information for third-party software included
 
 | Component | Version | License | Copyright |
 |-----------|---------|---------|-----------|
-| VictoriaMetrics | 1.133.0 | Apache 2.0 | 2019-2025 VictoriaMetrics, Inc. |
+| VictoriaMetrics | 1.96.0 | Apache 2.0 | 2019-2025 VictoriaMetrics, Inc. |
 | pymodbus | 3.7+ | BSD-3-Clause | 2008-2025 Pymodbus |
 | PyYAML | 6.0+ | MIT | 2017-2024 Ingy döt Net, Kirill Simonov |
 | goburrow/modbus | 0.1.0 | BSD-3-Clause | Quoc-Viet Nguyen |

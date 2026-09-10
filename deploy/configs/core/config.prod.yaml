@@ -67,6 +67,16 @@ logging:
   level: warn
   format: json
 
+# Prometheus exposition (ADR 0009).
+#
+# The monitoring port is loopback-only, so a scraper in another container can
+# only reach a listener of our own. 9464 is deliberately NOT published to the
+# host in compose.yml: the trust boundary is the compose network, and /metrics
+# has no authentication.
+metrics:
+  enabled: true
+  address: 0.0.0.0:9464
+
 # Adapter runtime status (ADR 0008). Runtime state is in memory only; core
 # re-learns it after a restart by broadcasting platform.adapter.hello.
 adapters:

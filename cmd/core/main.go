@@ -16,6 +16,7 @@ import (
 
 	"github.com/e7217/edg/internal/core"
 	"github.com/e7217/edg/internal/httpapi"
+	"github.com/e7217/edg/internal/metrics"
 	"github.com/e7217/edg/internal/natsauth"
 )
 
@@ -143,10 +144,19 @@ func main() {
 		log.Fatal("NATS server not ready")
 	}
 
+	// 2.1. Prometheus exposition (ADR 0009). Mounted before the banner so the
+	// URLs it prints are already live.
+	metricsCtx, stopMetrics := context.WithCancel(context.Background())
+	defer stopMetrics()
+	metricsURLs := setUpMetrics(metricsCtx, ns, cfg)
+
 	log.Println("=================================")
 	log.Println("  EDG Platform Core Started")
 	log.Printf("  NATS: nats://%s:%d", cfg.NATS.Host, cfg.NATS.Port)
 	log.Printf("  Monitor: http://%s:%d", cfg.NATS.HTTPHost, cfg.NATS.HTTPPort)
+	for _, u := range metricsURLs {
+		log.Printf("  Metrics: %s", u)
+	}
 	logAuthBanner(cfg, credsPath, credsSource)
 	log.Println("=================================")
 
@@ -198,6 +208,9 @@ func main() {
 		log.Fatalf("Failed to create store: %v", err)
 	}
 	defer store.Close()
+	if cfg.Metrics.Enabled {
+		store.RegisterMetrics(metrics.Default, core.StoreMetricsOptions{})
+	}
 
 	// 5. Initialize template loader (DB-authoritative; seed from dir on empty DB)
 	loader, err := core.NewTemplateLoaderWithStore(store)
@@ -220,6 +233,9 @@ func main() {
 		log.Fatalf("Failed to start enricher: %v", err)
 	}
 	defer enricher.Stop()
+	if cfg.Metrics.Enabled {
+		enricher.RegisterMetrics(metrics.Default)
+	}
 
 	dataHandler := core.NewDataHandlerWithConfig(js, store, core.DataHandlerOptions{
 		ValidatedSubject:   cfg.JetStream.ValidatedSubject,
@@ -257,6 +273,11 @@ func main() {
 			ProbeOnMiss: cfg.Adapters.ProbeOnMiss,
 		})
 		adapterHandler.SetRegistry(adapterRegistry)
+		if cfg.Metrics.Enabled {
+			core.RegisterAdapterMetrics(metrics.Default, adapterRegistry, core.AdapterMetricsOptions{
+				MaxTracked: cfg.Adapters.MetricsMaxTracked,
+			})
+		}
 		adapterRegistry.Start()
 		defer adapterRegistry.Stop()
 		defer adapterHandler.Stop()
@@ -324,6 +345,7 @@ func main() {
 	<-quit
 
 	log.Println("[Core] Shutting down...")
+	stopMetrics()
 	stopServices()
 	if sink != nil {
 		sink.Stop()

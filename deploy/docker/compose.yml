@@ -17,6 +17,11 @@ services:
       - "-storageDataPath=/victoria-metrics-data"
       - "-retentionPeriod=1y"
       - "-httpListenAddr=:8428"
+      # Built-in Prometheus-compatible scraper (ADR 0009). It pulls edg-core's
+      # operational metrics; the plant's telemetry still arrives over the
+      # sink's write path.
+      - "-promscrape.config=/etc/vm/scrape.yml"
+      - "-promscrape.configCheckInterval=30s"
     networks:
       - service-net
     healthcheck:
@@ -35,6 +40,8 @@ services:
       # NATS monitoring (8222) is deliberately not published: it exposes
       # /varz, /connz and /debug/vars with no authentication of any kind, and
       # the container healthcheck below reaches it over loopback anyway.
+      # Metrics (9464) is likewise not published: VictoriaMetrics scrapes it
+      # over the compose network, and /metrics has no authentication either.
     volumes:
       - edg-data:/opt/edg/data
     environment:

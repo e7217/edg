@@ -41,6 +41,11 @@ const EnvNATSCredentialsFile = "EDG_NATS_CREDENTIALS_FILE"
 // nats.auth.credentials_file is empty.
 const defaultCredentialsFileName = "nats-credentials.json"
 
+// DefaultSinkConsumerStatInterval is how often the sink refreshes its
+// JetStream backlog gauges. It is far below a 15s scrape interval, and each
+// refresh is one round trip on a loop that is already talking to the server.
+const DefaultSinkConsumerStatInterval = 15 * time.Second
+
 // CoreConfig contains runtime settings for the embedded core process.
 type CoreConfig struct {
 	NATS               NATSConfig        `yaml:"nats"`
@@ -54,6 +59,20 @@ type CoreConfig struct {
 	HTTP               HTTPConfig        `yaml:"http"`
 	Sink               SinkConfig        `yaml:"sink"`
 	Adapters           AdaptersConfig    `yaml:"adapters"`
+	Metrics            MetricsConfig     `yaml:"metrics"`
+}
+
+// MetricsConfig configures the Prometheus exposition surface (ADR 0009).
+type MetricsConfig struct {
+	// Enabled registers the collectors and mounts /metrics. Defaults to true.
+	Enabled bool `yaml:"enabled"`
+	// Address is a dedicated listener for /metrics, e.g. "0.0.0.0:9464".
+	//
+	// Empty means no dedicated listener, in which case /metrics is reachable
+	// only on the NATS monitoring port -- which binds to loopback by default
+	// (ADR 0007) and is therefore unreachable from a scraper running in
+	// another container. Container deployments must set this.
+	Address string `yaml:"address"`
 }
 
 // AdaptersConfig configures the adapter runtime-status registry (ADR 0008).
@@ -78,6 +97,10 @@ type AdaptersConfig struct {
 	// MaxConcurrentProbes stops a fleet-wide partition from becoming a probe
 	// storm.
 	MaxConcurrentProbes int `yaml:"max_concurrent_probes"`
+	// MetricsMaxTracked caps per-adapter /metrics series. Adapters past the
+	// cap fold into adapter_id="__overflow__"; a negative value exposes only
+	// the aggregates. Zero means DefaultAdapterMetricsMaxTracked.
+	MetricsMaxTracked int `yaml:"metrics_max_tracked"`
 }
 
 type NATSConfig struct {
@@ -159,6 +182,10 @@ type SinkConfig struct {
 	BatchMaxSize   int           `yaml:"batch_max_size"`
 	FlushInterval  time.Duration `yaml:"flush_interval"`
 	RequestTimeout time.Duration `yaml:"request_timeout"`
+	// ConsumerStatInterval throttles the JetStream ConsumerInfo round trip
+	// that feeds the backlog gauges. It runs on the drain loop rather than at
+	// scrape time so that scrape traffic can never reach the data path.
+	ConsumerStatInterval time.Duration `yaml:"consumer_stat_interval"`
 }
 
 type JetStreamStreamConfig struct {
@@ -224,6 +251,13 @@ func DefaultCoreConfig() CoreConfig {
 			Address:  "127.0.0.1:8080",
 			TokenEnv: "EDG_HTTP_TOKEN",
 		},
+		Metrics: MetricsConfig{
+			Enabled: true,
+			// No dedicated listener by default: a single-binary operator
+			// reaches /metrics on the monitoring port, and opening a second
+			// port that nobody asked for is a cost with no matching benefit.
+			Address: "",
+		},
 		Adapters: AdaptersConfig{
 			Enabled:             true,
 			StaleAfterFloor:     DefaultAdapterStaleFloor,
@@ -233,6 +267,7 @@ func DefaultCoreConfig() CoreConfig {
 			ProbeOnMiss:         true,
 			ProbeTimeout:        2 * time.Second,
 			MaxConcurrentProbes: DefaultAdapterMaxProbes,
+			MetricsMaxTracked:   DefaultAdapterMetricsMaxTracked,
 		},
 		Sink: SinkConfig{
 			Enabled:        true,
@@ -242,6 +277,8 @@ func DefaultCoreConfig() CoreConfig {
 			BatchMaxSize:   500,
 			FlushInterval:  time.Second,
 			RequestTimeout: 5 * time.Second,
+
+			ConsumerStatInterval: DefaultSinkConsumerStatInterval,
 		},
 	}
 }
@@ -360,6 +397,9 @@ func (c *SinkConfig) applyDefaults(defaults SinkConfig) {
 	if c.RequestTimeout == 0 {
 		c.RequestTimeout = defaults.RequestTimeout
 	}
+	if c.ConsumerStatInterval == 0 {
+		c.ConsumerStatInterval = defaults.ConsumerStatInterval
+	}
 }
 
 func (c CoreConfig) validate() error {
@@ -408,6 +448,11 @@ func (c CoreConfig) validate() error {
 			return fmt.Errorf("invalid adapters.max_concurrent_probes: %d (must be > 0)", c.Adapters.MaxConcurrentProbes)
 		}
 	}
+	if c.Metrics.Enabled && c.Metrics.Address != "" {
+		if _, _, err := net.SplitHostPort(c.Metrics.Address); err != nil {
+			return fmt.Errorf("invalid metrics.address: %q (want host:port)", c.Metrics.Address)
+		}
+	}
 	if c.Sink.Enabled {
 		if c.Sink.URL == "" {
 			return fmt.Errorf("sink.url is required when sink.enabled is true")
@@ -420,6 +465,9 @@ func (c CoreConfig) validate() error {
 		}
 		if c.Sink.RequestTimeout <= 0 {
 			return fmt.Errorf("invalid sink.request_timeout: %s (must be > 0)", c.Sink.RequestTimeout)
+		}
+		if c.Sink.ConsumerStatInterval <= 0 {
+			return fmt.Errorf("invalid sink.consumer_stat_interval: %s (must be > 0)", c.Sink.ConsumerStatInterval)
 		}
 	}
 	return nil
@@ -514,13 +562,14 @@ func (c *JetStreamStreamConfig) UnmarshalYAML(value *yaml.Node) error {
 
 func (c *SinkConfig) UnmarshalYAML(value *yaml.Node) error {
 	var raw struct {
-		Enabled        *bool  `yaml:"enabled"`
-		URL            string `yaml:"url"`
-		ConsumerName   string `yaml:"consumer_name"`
-		Measurement    string `yaml:"measurement"`
-		BatchMaxSize   int    `yaml:"batch_max_size"`
-		FlushInterval  string `yaml:"flush_interval"`
-		RequestTimeout string `yaml:"request_timeout"`
+		Enabled              *bool  `yaml:"enabled"`
+		URL                  string `yaml:"url"`
+		ConsumerName         string `yaml:"consumer_name"`
+		Measurement          string `yaml:"measurement"`
+		BatchMaxSize         int    `yaml:"batch_max_size"`
+		FlushInterval        string `yaml:"flush_interval"`
+		RequestTimeout       string `yaml:"request_timeout"`
+		ConsumerStatInterval string `yaml:"consumer_stat_interval"`
 	}
 	if err := value.Decode(&raw); err != nil {
 		return err
@@ -547,6 +596,31 @@ func (c *SinkConfig) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("invalid sink.request_timeout: %w", err)
 		}
 		c.RequestTimeout = duration
+	}
+	if raw.ConsumerStatInterval != "" {
+		duration, err := time.ParseDuration(raw.ConsumerStatInterval)
+		if err != nil {
+			return fmt.Errorf("invalid sink.consumer_stat_interval: %w", err)
+		}
+		c.ConsumerStatInterval = duration
+	}
+	return nil
+}
+
+// UnmarshalYAML mirrors SinkConfig's: enabled defaults to true when the key is
+// omitted, which the "if zero then default" idiom in applyDefaults cannot
+// express for a bool.
+func (c *MetricsConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Enabled *bool  `yaml:"enabled"`
+		Address string `yaml:"address"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*c = MetricsConfig{
+		Enabled: raw.Enabled == nil || *raw.Enabled,
+		Address: raw.Address,
 	}
 	return nil
 }
@@ -638,6 +712,9 @@ func (c *AdaptersConfig) applyDefaults(defaults AdaptersConfig) {
 	if c.MaxConcurrentProbes == 0 {
 		c.MaxConcurrentProbes = defaults.MaxConcurrentProbes
 	}
+	if c.MetricsMaxTracked == 0 {
+		c.MetricsMaxTracked = defaults.MetricsMaxTracked
+	}
 }
 
 // UnmarshalYAML mirrors SinkConfig's: durations arrive as strings, and the
@@ -652,12 +729,16 @@ func (c *AdaptersConfig) UnmarshalYAML(value *yaml.Node) error {
 		ProbeOnMiss         *bool  `yaml:"probe_on_miss"`
 		ProbeTimeout        string `yaml:"probe_timeout"`
 		MaxConcurrentProbes int    `yaml:"max_concurrent_probes"`
+		MetricsMaxTracked   int    `yaml:"metrics_max_tracked"`
 	}
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
 
-	*c = AdaptersConfig{MaxConcurrentProbes: raw.MaxConcurrentProbes}
+	*c = AdaptersConfig{
+		MaxConcurrentProbes: raw.MaxConcurrentProbes,
+		MetricsMaxTracked:   raw.MetricsMaxTracked,
+	}
 	c.Enabled = raw.Enabled == nil || *raw.Enabled
 	c.ProbeOnMiss = raw.ProbeOnMiss == nil || *raw.ProbeOnMiss
 

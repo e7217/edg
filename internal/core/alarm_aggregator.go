@@ -80,6 +80,7 @@ func (a *AlarmAggregator) Add(alarm Alarm) error {
 	}
 	if group == nil {
 		group = a.newPendingGroupLocked(alarm)
+		a.publishGroupCountLocked()
 		return nil
 	}
 
@@ -97,12 +98,21 @@ func (a *AlarmAggregator) Add(alarm Alarm) error {
 	if oldKey != group.key {
 		delete(a.groups, oldKey)
 		if existing := a.groups[group.key]; existing != nil && existing != group {
+			alarmMerges.Inc()
 			a.mergeGroupsLocked(existing, group)
 			group = existing
 		}
 		a.groups[group.key] = group
+		a.publishGroupCountLocked()
 	}
 	return nil
+}
+
+// publishGroupCountLocked mirrors the open-group count into the gauge. It is
+// pushed from here rather than pulled at scrape time so that a scrape never
+// has to take a.mu -- the same lock Add holds while running SQL.
+func (a *AlarmAggregator) publishGroupCountLocked() {
+	alarmGroupsPending.Set(int64(len(a.groups)))
 }
 
 func (a *AlarmAggregator) newPendingGroupLocked(alarm Alarm) *pendingAlarmGroup {
@@ -133,6 +143,7 @@ func (a *AlarmAggregator) findGroupForAssetLocked(assetID string) (*pendingAlarm
 	for _, group := range a.groups {
 		candidates := append([]string{}, group.assetIDs...)
 		candidates = append(candidates, assetID)
+		alarmLCAQueries.Inc()
 		lca, err := a.store.FindLowestCommonAncestor(candidates, a.relationTypes, a.maxDepth)
 		if err != nil {
 			return nil, nil, err
@@ -169,9 +180,11 @@ func (a *AlarmAggregator) flush(group *pendingAlarmGroup) {
 		return
 	}
 	delete(a.groups, group.key)
+	a.publishGroupCountLocked()
 	alarmGroup := group.toAlarmGroup(time.Now().UTC())
 	a.mu.Unlock()
 
+	alarmsFlushed.Inc()
 	if a.publisher != nil {
 		a.publisher.PublishAlarmGrouped(alarmGroup)
 	}

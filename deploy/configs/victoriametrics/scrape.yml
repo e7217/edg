@@ -1,0 +1,33 @@
+# VictoriaMetrics built-in scraper (ADR 0009).
+#
+# VictoriaMetrics single-node accepts a Prometheus scrape_configs file via
+# -promscrape.config, so the stack needs no separate Prometheus process. Only
+# the operational metrics come through here; the plant's telemetry still
+# arrives over the built-in sink's write path (ADR 0005).
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  # edg-core's own health. 9464 is the dedicated metrics listener: the NATS
+  # monitoring port is loopback-only (ADR 0007) and unreachable from here.
+  - job_name: edg-core
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - edg-core:9464
+        labels:
+          service: edg-core
+
+  # VictoriaMetrics scraping itself. Without this, ingestion stalls and disk
+  # pressure are visible only in the logs -- and the sink acks JetStream
+  # messages only after VM accepts them, so VM's own health is the gateway's
+  # backpressure source.
+  - job_name: victoriametrics
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - localhost:8428
+        labels:
+          service: victoriametrics

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"expvar"
 	"fmt"
 	"io"
 	"log"
@@ -18,15 +17,112 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/e7217/edg/internal/metrics"
 )
 
-// VM sink expvar counters, consistent with the edg_core_* naming used elsewhere.
+// VM sink counters. The expvar names are the historical ones ADR 0001 and the
+// user guide document; the Desc alongside each is what /metrics serves.
 var (
-	sinkLinesWritten   = expvar.NewInt("edg_core_sink_lines_written")
-	sinkBatchesWritten = expvar.NewInt("edg_core_sink_batches_written")
-	sinkWriteFailures  = expvar.NewInt("edg_core_sink_write_failures")
-	sinkDecodeFailures = expvar.NewInt("edg_core_sink_decode_failures")
+	// "lines" here means InfluxDB line-protocol lines, i.e. individual time
+	// series points -- not messages. appendAssetDataLines skips every value
+	// without a numeric reading, so this is well below the message count.
+	sinkLinesWritten = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_sink_lines_written_total",
+		Help: "Line-protocol lines (time series points, not messages) accepted by VictoriaMetrics.",
+	}, "edg_core_sink_lines_written")
+
+	sinkBatchesWritten = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_sink_batches_written_total",
+		Help: "Batches successfully written to VictoriaMetrics and then acked on JetStream.",
+	}, "edg_core_sink_batches_written")
+
+	// The reason label splits a transport failure (VM unreachable) from a
+	// rejected write (VM answered, but not with 2xx). They call for different
+	// responses and today both look identical in the log.
+	sinkWriteFailures = metrics.Default.NewCounterVecLegacy(metrics.Desc{
+		Name: "edg_core_sink_write_failures_total",
+		Help: "Failed writes to VictoriaMetrics. The batch is nakked, so a sustained rate means redelivery pressure.",
+	}, "reason", []string{sinkFailTransport, sinkFailHTTPStatus}, "edg_core_sink_write_failures")
+
+	sinkDecodeFailures = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_sink_decode_failures_total",
+		Help: "Messages in a batch that could not be decoded as asset data. They are skipped, not retried.",
+	}, "edg_core_sink_decode_failures")
+
+	// Non-timeout Fetch errors were previously silent: no counter, no log. A
+	// consumer that has stopped delivering looks exactly like an idle plant.
+	sinkFetchErrors = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_sink_fetch_errors_total",
+		Help: "JetStream Fetch calls that failed for a reason other than the flush-window timeout.",
+	})
+
+	sinkMessagesAcked = metrics.Default.NewCounterVec(metrics.Desc{
+		Name: "edg_core_sink_messages_acked_total",
+		Help: "Messages acked. outcome=poison means the batch produced no numeric lines and was acked to stop endless redelivery -- that data is dropped, not stored.",
+	}, "outcome", []string{sinkAckWritten, sinkAckPoison})
+
+	sinkMessagesNakked = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_sink_messages_nakked_total",
+		Help: "Messages nakked after a failed write. Its rate is the redelivery pressure on the stream.",
+	})
+
+	sinkWriteSeconds = metrics.Default.NewHistogram(metrics.Desc{
+		Name: "edg_core_sink_write_seconds",
+		Help: "Duration of a write to VictoriaMetrics, including the HTTP round trip. Compare the tail with sink.request_timeout. Buckets are provisional.",
+	}, metrics.DefaultLatencyBounds)
+
+	sinkUp = metrics.Default.NewGauge(metrics.Desc{
+		Name: "edg_core_sink_up",
+		Help: "1 while the sink drain loop is running.",
+	})
+
+	// Consumer backlog. ADR 0005 made the JetStream-to-storage hop durable but
+	// left the backlog invisible; these are the numbers that say whether the
+	// gateway is keeping up.
+	sinkConsumerPending = metrics.Default.NewGauge(metrics.Desc{
+		Name: "edg_core_sink_consumer_pending",
+		Help: "Messages waiting in the stream for the sink's durable consumer. A sustained climb means VictoriaMetrics is slower than the plant.",
+	})
+
+	sinkConsumerAckPending = metrics.Default.NewGauge(metrics.Desc{
+		Name: "edg_core_sink_consumer_ack_pending",
+		Help: "Messages delivered to the sink and not yet acked.",
+	})
+
+	sinkConsumerRedelivered = metrics.Default.NewGauge(metrics.Desc{
+		Name: "edg_core_sink_consumer_redelivered",
+		Help: "Messages the stream is currently redelivering to the sink.",
+	})
 )
+
+// Label values for the sink counters. They are constants so that a typo is a
+// compile error rather than a silent fold into "other".
+const (
+	sinkFailTransport  = "transport"
+	sinkFailHTTPStatus = "http_status"
+	sinkAckWritten     = "written"
+	sinkAckPoison      = "poison"
+)
+
+// errWriteRejected marks a write that reached VictoriaMetrics and came back
+// non-2xx, as opposed to one that never got there.
+type errWriteRejected struct {
+	status int
+}
+
+func (e errWriteRejected) Error() string {
+	return fmt.Sprintf("VictoriaMetrics write returned status %d", e.status)
+}
+
+// writeFailureReason classifies a write error for the reason label.
+func writeFailureReason(err error) string {
+	var rejected errWriteRejected
+	if errors.As(err, &rejected) {
+		return sinkFailHTTPStatus
+	}
+	return sinkFailTransport
+}
 
 // VMSink consumes validated asset data from JetStream via a durable pull
 // consumer and writes it to a VictoriaMetrics-compatible endpoint using the
@@ -42,6 +138,9 @@ type VMSink struct {
 	batchMaxSize  int
 	flushInterval time.Duration
 	httpClient    *http.Client
+	// consumerStatInterval throttles the ConsumerInfo round trip that feeds
+	// the backlog gauges. Injectable so tests do not have to wait real time.
+	consumerStatInterval time.Duration
 
 	sub    *nats.Subscription
 	cancel context.CancelFunc
@@ -63,6 +162,13 @@ func NewVMSink(js nats.JetStreamContext, subject string, cfg SinkConfig) (*VMSin
 	if err != nil {
 		return nil, err
 	}
+	// A zero interval would put a ConsumerInfo round trip on every pass of the
+	// drain loop. Callers that build SinkConfig by hand get the default rather
+	// than an accidental hot loop against the server.
+	statInterval := cfg.ConsumerStatInterval
+	if statInterval <= 0 {
+		statInterval = DefaultSinkConsumerStatInterval
+	}
 	return &VMSink{
 		js:            js,
 		subject:       subject,
@@ -72,6 +178,8 @@ func NewVMSink(js nats.JetStreamContext, subject string, cfg SinkConfig) (*VMSin
 		batchMaxSize:  cfg.BatchMaxSize,
 		flushInterval: cfg.FlushInterval,
 		httpClient:    &http.Client{Timeout: cfg.RequestTimeout},
+
+		consumerStatInterval: statInterval,
 	}, nil
 }
 
@@ -103,11 +211,24 @@ func (s *VMSink) Stop() {
 
 func (s *VMSink) run(ctx context.Context) {
 	defer s.wg.Done()
+	sinkUp.Set(1)
+	defer sinkUp.Set(0)
+
+	// Consumer state comes from a NATS round trip, so it is refreshed on this
+	// loop rather than at scrape time -- a scraper must never be able to put
+	// traffic on the data path. The refresh sits above the select so it keeps
+	// running while the plant is idle and Fetch only ever times out.
+	var lastStat time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
+		}
+
+		if now := time.Now(); now.Sub(lastStat) >= s.consumerStatInterval {
+			lastStat = now
+			s.refreshConsumerStats()
 		}
 
 		msgs, err := s.sub.Fetch(s.batchMaxSize, nats.MaxWait(s.flushInterval))
@@ -116,6 +237,8 @@ func (s *VMSink) run(ctx context.Context) {
 				continue // no messages within the flush window
 			}
 			// Connection draining/closed or transient consumer error.
+			sinkFetchErrors.Inc()
+			log.Printf("[Core] VM sink fetch failed: %v", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -130,13 +253,19 @@ func (s *VMSink) run(ctx context.Context) {
 		body, lines := s.encodeBatch(msgs)
 		if lines == 0 {
 			// Nothing numeric to write (or all decode failures); ack so the
-			// poison messages are not redelivered forever.
+			// poison messages are not redelivered forever. This is a drop:
+			// the outcome label is what makes it visible.
+			sinkMessagesAcked.With(sinkAckPoison).Add(int64(len(msgs)))
 			ackAll(msgs)
 			continue
 		}
 
-		if err := s.write(ctx, body); err != nil {
-			sinkWriteFailures.Add(1)
+		start := time.Now()
+		err = s.write(ctx, body)
+		sinkWriteSeconds.Observe(time.Since(start).Seconds())
+		if err != nil {
+			sinkWriteFailures.With(writeFailureReason(err)).Inc()
+			sinkMessagesNakked.Add(int64(len(msgs)))
 			log.Printf("[Core] VM sink write failed (%d lines requeued): %v", lines, err)
 			nakAll(msgs)
 			select {
@@ -149,8 +278,27 @@ func (s *VMSink) run(ctx context.Context) {
 
 		sinkLinesWritten.Add(int64(lines))
 		sinkBatchesWritten.Add(1)
+		sinkMessagesAcked.With(sinkAckWritten).Add(int64(len(msgs)))
 		ackAll(msgs)
 	}
+}
+
+// refreshConsumerStats publishes the durable consumer's backlog.
+//
+// On error the previous values are left in place: reporting zero pending for a
+// consumer we simply could not reach would read as "all caught up", which is
+// the opposite of what a failed query implies.
+func (s *VMSink) refreshConsumerStats() {
+	if s.sub == nil {
+		return
+	}
+	info, err := s.sub.ConsumerInfo()
+	if err != nil || info == nil {
+		return
+	}
+	sinkConsumerPending.Set(int64(info.NumPending))
+	sinkConsumerAckPending.Set(int64(info.NumAckPending))
+	sinkConsumerRedelivered.Set(int64(info.NumRedelivered))
 }
 
 // encodeBatch turns a batch of validated messages into a single line-protocol
@@ -185,7 +333,7 @@ func (s *VMSink) write(ctx context.Context, body []byte) error {
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("VictoriaMetrics write returned status %d", resp.StatusCode)
+		return errWriteRejected{status: resp.StatusCode}
 	}
 	return nil
 }
