@@ -24,8 +24,33 @@ This guide provides detailed instructions for installing, configuring, and monit
    ```
    This will:
    - Install binaries to `/opt/edg/bin/`
-   - Copy configs to `/opt/edg/configs/`
+   - Copy configs to `/opt/edg/configs/` and templates to `/opt/edg/templates/`
+   - Link `/opt/edg/config.yaml` to the selected environment config
    - Create systemd services (Linux only)
+
+   `EDG_ENV` selects which config becomes active (`dev`, `staging` or `prod`;
+   default `prod`):
+
+   ```bash
+   sudo EDG_ENV=dev ./install.sh
+   ```
+
+   The link is what makes the installed config take effect. `edg-core` looks
+   for `/opt/edg/config.yaml`, and the systemd unit passes `-config` pointing
+   at it; without the link the process finds nothing and runs on compiled-in
+   defaults, which use `nats.auth.mode: compat` rather than the `strict` the
+   production config specifies. **Whatever happens, the startup log names the
+   file it loaded** — check it before trusting a config change:
+
+   ```
+   [Config] loaded /opt/edg/config.yaml (-config flag)
+   ```
+
+   or, if nothing was found:
+
+   ```
+   [Config] no config file found (searched: ...); using built-in defaults.
+   ```
 
 ### Managing Services (Systemd)
 
@@ -56,8 +81,21 @@ If you are not using systemd, you can start components manually:
 ### Custom Installation Directory
 
 ```bash
-INSTALL_DIR=/custom/path ./install.sh
+sudo INSTALL_DIR=/srv/edg ./install.sh
 ```
+
+The staging and production configs name their data and template directories
+absolutely, so that the same command run from a different working directory
+cannot quietly open a different database. The installer rewrites those paths to
+the chosen root and refuses to finish if any of them still point at `/opt/edg`,
+so a relocated install never ends up split across two directories.
+
+### Re-running the Installer
+
+Upgrading is `./install.sh` again over the same root. It never overwrites a
+config you have edited: an unchanged file is replaced, a changed one is kept
+and the shipped version is written beside it as `<name>.new` for you to merge.
+The installer lists anything it preserved.
 
 ### Where Data Lives
 

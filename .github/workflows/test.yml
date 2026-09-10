@@ -151,6 +151,25 @@ jobs:
       - name: Boot the shipped compose stack
         run: ./scripts/compose-smoke.sh ci
 
+  install-smoke:
+    name: Release bundle and installer
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The release workflow has never run, so its packaging step and the
+      # installer it ships had never been executed by anything (#117). This
+      # builds a bundle with the same script release.yml uses and installs
+      # from it.
+      - name: Build a bundle and install from it
+        run: ./scripts/install-smoke.sh
+
   go-sdk:
     # adapters/go/sdk is a separate module and the repository has no go.work,
     # so the core job's `go test ./...` never reaches it. Without this job its

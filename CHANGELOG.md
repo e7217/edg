@@ -49,6 +49,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The release bundle could not be built, and the installer it ships could not
+  run. `.github/workflows/release.yml` copied a top-level `configs/` directory
+  that has not existed since the deployment reorganisation, and
+  `scripts/install.sh` copied the same non-existent path — so the packaging
+  step aborted on three of four platforms and the installer aborted before
+  writing any systemd unit, leaving `systemctl start edg-core` with no unit to
+  start. The Windows leg failed one step earlier still, on a VictoriaMetrics
+  binary name that asset has never used. None of it had been noticed because
+  the release workflow has never run: release-please fails on every push
+  without the repository's "Allow GitHub Actions to create and approve pull
+  requests" setting, so no version tag has ever been cut (#114, #117).
+
+- A host install silently ran on compiled-in defaults. `install.sh` placed the
+  configs where nothing looked for them and the systemd unit passed no
+  `-config`, so `nats.auth.mode` was `compat` while the freshly installed
+  `config.prod.yaml` said `strict`, and the operator got no indication. The
+  installer now links `<install root>/config.yaml` to the selected environment
+  config — as the container image already did — and the unit passes `-config`
+  explicitly. `EDG_ENV` selects the environment (default `prod`) (#117).
+
+- `edg-core` now logs which configuration file it loaded, or that it found none
+  and is using built-in defaults. Both #114 and #117 were invisible for months
+  partly because this line did not exist.
+
+- The installer no longer swallows a missing VictoriaMetrics binary with
+  `|| true`, which used to report a successful install while writing a systemd
+  unit whose `ExecStart` pointed at nothing. It also installs `templates/`,
+  without which every templated asset create or update is rejected with
+  "template not found".
+
+- `INSTALL_DIR` now actually relocates a host install. The staging and
+  production configs name their paths absolutely, and nothing rewrote them, so
+  a relocated install put binaries in the chosen root while writing data to
+  `/opt/edg` and looking for templates in a directory that did not exist —
+  loading zero templates and rejecting every templated asset. The installer
+  rewrites the paths and refuses to finish if any still point at the default
+  root.
+
+- Re-running the installer no longer discards edited configuration. An
+  unchanged file is replaced; a changed one is kept and the shipped version is
+  written beside it as `<name>.new`.
+
 - The bundled `docker compose` stack could not start from a clean volume. The
   image bakes `config.prod.yaml`, whose data paths were `/var/lib/edg` — a
   directory nothing creates, in an image whose data volume is mounted at

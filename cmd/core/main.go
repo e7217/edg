@@ -8,6 +8,8 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -47,14 +49,17 @@ func main() {
 	}
 
 	configPath := *configFlag
+	configSource := "-config flag"
 	if configPath == "" {
 		configPath = discoverConfigPath()
+		configSource = "auto-discovered"
 	}
 
 	cfg, err := core.LoadCoreConfig(configPath)
 	if err != nil {
 		log.Fatalf("Failed to load core config: %v", err)
 	}
+	logConfigSource(configPath, configSource)
 
 	// Allow the VM sink endpoint to be overridden without editing the config
 	// file (e.g. to point at a service hostname in container deployments).
@@ -411,15 +416,44 @@ func runExportTemplates(cfg core.CoreConfig, dir string) error {
 }
 
 func discoverConfigPath() string {
-	for _, path := range []string{
-		"/opt/edg/config.yaml",
-		"deploy/configs/core/config.dev.yaml",
-	} {
+	for _, path := range configSearchPath {
 		if _, err := os.Stat(path); err == nil {
 			return path
 		}
 	}
 	return ""
+}
+
+// configSearchPath is where the process looks when no -config flag and no
+// EDG_CORE_CONFIG are given. The install root's config.yaml is a symlink the
+// installer and the container image both create; the second entry is a
+// convenience for running from a source checkout and is relative to the
+// working directory.
+var configSearchPath = []string{
+	"/opt/edg/config.yaml",
+	"deploy/configs/core/config.dev.yaml",
+}
+
+// logConfigSource states which configuration is in effect.
+//
+// It exists because the two ways of getting this wrong are silent. An empty
+// path means LoadCoreConfig returned compiled-in defaults with a nil error, so
+// a deployment whose config file is installed somewhere the process never
+// looks runs on defaults -- with nats.auth.mode compat rather than the strict
+// the file says -- and nothing in the output says so (#117). A relative path
+// resolves against the working directory, so the same command run from
+// somewhere else silently loads a different file, or none.
+func logConfigSource(path, source string) {
+	if path == "" {
+		log.Printf("[Config] no config file found (searched: %s); using built-in defaults. "+
+			"Pass -config or set EDG_CORE_CONFIG to load one.", strings.Join(configSearchPath, ", "))
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	log.Printf("[Config] loaded %s (%s)", abs, source)
 }
 
 // logAuthBanner tells the operator where the credentials live and what the
