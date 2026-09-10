@@ -107,11 +107,54 @@ jobs:
           fi
 
       - name: Upload Release Assets
-        uses: softprops/action-gh-release@v1
+        # v2, not v1: v1 prefers GITHUB_REF over the tag_name input, so a
+        # dispatched or called run tried to attach assets to a release named
+        # `refs/heads/main` and failed with "Resource not accessible by
+        # integration".
+        uses: softprops/action-gh-release@v2
         with:
           # Explicit, because there is no tag ref to infer it from when this
           # workflow is called rather than triggered by a tag push.
           tag_name: ${{ inputs.tag }}
-          files: |
-            edg-*.tar.gz
-            edg-*.zip
+          # Exactly this leg's archive. A wildcard over both extensions warned
+          # about the one that never matches on each platform, which is the
+          # kind of routine warning that hides a real one.
+          files: edg-${{ inputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.*
+          # A release that silently ships nothing is the defect this whole
+          # workflow was just fixed for. Fail instead.
+          fail_on_unmatched_files: true
+
+  # The build legs can each succeed while the release still ends up with
+  # nothing attached -- that is exactly how v0.1.0 shipped empty. Assert the
+  # end state rather than trusting four independent uploads.
+  verify:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Every platform archive is attached to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected="edg-${{ inputs.tag }}-linux-amd64.tar.gz
+          edg-${{ inputs.tag }}-linux-arm64.tar.gz
+          edg-${{ inputs.tag }}-darwin-amd64.tar.gz
+          edg-${{ inputs.tag }}-windows-amd64.zip"
+
+          actual=$(gh release view "${{ inputs.tag }}" --repo "${{ github.repository }}" \
+            --json assets --jq '.assets[].name')
+          echo "attached:"; echo "$actual" | sed 's/^/  /'
+
+          missing=0
+          while read -r want; do
+            want=$(echo "$want" | xargs)
+            [ -n "$want" ] || continue
+            if ! echo "$actual" | grep -qx "$want"; then
+              echo "::error::$want is missing from release ${{ inputs.tag }}"
+              missing=1
+            fi
+          done <<< "$expected"
+          [ $missing -eq 0 ] || exit 1
+          echo "all four platform archives are attached"
