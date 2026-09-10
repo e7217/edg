@@ -73,6 +73,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/etc/edg/templates`, which no deployment creates either, so first boot
   seeded no templates and logged only a warning.
 
+- `deploy/docker/compose.yml` declared its `service-net` network as `external`,
+  which requires `docker network create service-net` out of band. That step was
+  documented nowhere, so `docker compose up` failed outright on any machine
+  that did not already have one lying around. Compose now creates and owns the
+  network, pinned to the same name so a separately started adapter container
+  can still join it with `--network service-net`.
+
 - The `JetStream -> storage` hop now honours the durable, ack-after-write
   boundary described in ADR 0001. The former Telegraf `queue_group` subscription
   did not replay the JetStream backlog after downtime; the built-in durable

@@ -107,5 +107,12 @@ volumes:
     driver: local
 
 networks:
-  service-net:      
-    external: true
+  service-net:
+    # Compose creates and owns this network. It was declared `external: true`,
+    # which requires `docker network create service-net` out of band -- and
+    # that step is documented nowhere, so `docker compose up` failed outright
+    # on any machine that did not already happen to have one lying around
+    # (#114). `name:` pins it without the project prefix so an adapter
+    # container started separately can still join with
+    # `--network service-net`.
+    name: service-net
