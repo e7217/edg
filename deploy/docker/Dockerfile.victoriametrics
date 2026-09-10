@@ -1,4 +1,8 @@
 FROM victoriametrics/victoria-metrics:v1.96.0
 
-# Using official image with pinned version for consistency
-# No additional customization needed - all configuration via command args
+# Pinned for reproducibility. Keep the version in THIRD_PARTY_LICENSES.md in
+# step with this line.
+
+# Scrape configuration for the built-in Prometheus-compatible scraper, enabled
+# by -promscrape.config in compose.yml (ADR 0009).
+COPY deploy/configs/victoriametrics/scrape.yml /etc/vm/scrape.yml
