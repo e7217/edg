@@ -12,6 +12,7 @@
 set -euo pipefail
 
 PROJECT="${1:-edg-smoke}"
+ENV_COPIED=""
 COMPOSE_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/deploy/docker/compose.yml"
 READY_TIMEOUT="${READY_TIMEOUT:-180}"
 
@@ -26,6 +27,7 @@ cleanup() {
     compose logs --no-color --tail=30 edg-victoriametrics || true
   fi
   compose down -v --remove-orphans >/dev/null 2>&1 || true
+  [ "${ENV_COPIED:-}" = "1" ] && rm -f "$(dirname "$COMPOSE_FILE")/.env"
   return $status
 }
 trap cleanup EXIT
@@ -40,6 +42,15 @@ container_health() {
   [ -n "$cid" ] || { echo "absent"; return; }
   docker inspect "$cid" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}'
 }
+
+# The stack is built with whatever a copied .env says, and .env.example steers
+# ENV -- which selects the config baked into the image. Point the run at the
+# example so the file we hand people is the one under test.
+if [ -f "$(dirname "$COMPOSE_FILE")/.env.example" ] && [ ! -f "$(dirname "$COMPOSE_FILE")/.env" ]; then
+  echo "==> using .env.example as .env for this run"
+  cp "$(dirname "$COMPOSE_FILE")/.env.example" "$(dirname "$COMPOSE_FILE")/.env"
+  ENV_COPIED=1
+fi
 
 echo "==> building"
 compose build --quiet edg-core edg-victoriametrics
