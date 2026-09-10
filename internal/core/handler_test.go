@@ -32,11 +32,14 @@ func TestHandleAssetData_Success(t *testing.T) {
 		Data:    jsonData,
 	}
 
+	before := vecValue(t, "edg_core_data_values_total", "kind", valueKindNumber)
+
 	// Process message
 	handler.HandleAssetData(msg)
 
-	// Verify data was stored
-	assert.Equal(t, 1, handler.GetDataCount())
+	// The payload was decoded and every value in it accounted for. That is
+	// what "processed" means here; there is no JetStream in this fixture.
+	assert.Equal(t, before+1, vecValue(t, "edg_core_data_values_total", "kind", valueKindNumber))
 }
 
 // TestHandleAssetData_InvalidJSON tests handling of malformed JSON
@@ -49,11 +52,15 @@ func TestHandleAssetData_InvalidJSON(t *testing.T) {
 		Data:    []byte("{invalid json}"),
 	}
 
+	beforeDecode := dataDecodeFailures.Value()
+	beforeValues := vecValue(t, "edg_core_data_values_total", "kind", valueKindNumber)
+
 	// Process message (should log error but not panic)
 	handler.HandleAssetData(msg)
 
-	// Verify no data was stored
-	assert.Equal(t, 0, handler.GetDataCount())
+	// It failed at decode and went no further.
+	assert.Equal(t, beforeDecode+1, dataDecodeFailures.Value())
+	assert.Equal(t, beforeValues, vecValue(t, "edg_core_data_values_total", "kind", valueKindNumber))
 }
 
 // TestHandleAssetData_PassThrough_DoesNotRegister verifies the default policy:
@@ -86,8 +93,10 @@ func TestHandleAssetData_PassThrough_DoesNotRegister(t *testing.T) {
 	asset, err := store.GetAsset("undeclared-sensor")
 	require.NoError(t, err)
 	assert.Nil(t, asset)
-	assert.Equal(t, 1, handler.GetDataCount())
 	assert.Equal(t, before+1, undeclaredAssets.Value())
+	// That the data still reaches the validated subject is asserted against a
+	// real JetStream in TestHandleAssetData_WithJetStreamAndStore; there is
+	// nothing to publish to here.
 }
 
 // TestHandleAssetData_DeadLetterPolicy_SkipsValidated verifies the dead_letter
@@ -97,7 +106,19 @@ func TestHandleAssetData_DeadLetterPolicy_SkipsValidated(t *testing.T) {
 	require.NoError(t, err)
 	defer store.Close()
 
-	handler := NewDataHandlerWithConfig(nil, store, DataHandlerOptions{
+	// A real JetStream, because the claim in the name -- that the message does
+	// not reach the validated subject -- is only checkable against one. With a
+	// nil JetStream nothing is published either way, so the test could not
+	// tell the two policies apart.
+	_, _, js := startTestNATSServer(t, true)
+	_, err = js.AddStream(&nats.StreamConfig{
+		Name:     "DEADLETTER_POLICY_TEST",
+		Subjects: []string{"platform.data.>"},
+		Storage:  nats.MemoryStorage,
+	})
+	require.NoError(t, err)
+
+	handler := NewDataHandlerWithConfig(js, store, DataHandlerOptions{
 		UnknownAssetPolicy: UnknownAssetPolicyDeadLetter,
 	})
 
@@ -116,11 +137,21 @@ func TestHandleAssetData_DeadLetterPolicy_SkipsValidated(t *testing.T) {
 		Data:    jsonData,
 	})
 
-	assert.Equal(t, 0, handler.GetDataCount())
 	assert.Equal(t, before+1, undeclaredAssets.Value())
 	asset, err := store.GetAsset("undeclared-dl-sensor")
 	require.NoError(t, err)
 	assert.Nil(t, asset)
+
+	// Nothing on the validated subject, and the dead-letter subject got it.
+	info, err := js.StreamInfo("DEADLETTER_POLICY_TEST")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), info.State.Msgs, "exactly the dead letter should be in the stream")
+
+	sub, err := js.SubscribeSync(DefaultValidatedDataSubject, nats.DeliverAll())
+	require.NoError(t, err)
+	defer func() { _ = sub.Unsubscribe() }()
+	_, err = sub.NextMsg(500 * time.Millisecond)
+	assert.ErrorIs(t, err, nats.ErrTimeout, "the message must not reach the validated subject")
 }
 
 func TestNewDataHandlerWithSubjects(t *testing.T) {
@@ -259,29 +290,4 @@ func TestHandleAssetData_ExistingAssetUnaffected(t *testing.T) {
 	require.NotNil(t, asset)
 	assert.Equal(t, "Existing Manual Sensor", asset.Name)
 	assert.Equal(t, SourceManual, asset.Source)
-	assert.Equal(t, 1, handler.GetDataCount())
-}
-
-// TestGetDataCount tests thread-safe data count
-func TestGetDataCount(t *testing.T) {
-	handler := NewDataHandler(nil, nil)
-
-	assert.Equal(t, 0, handler.GetDataCount())
-
-	// Add some data
-	for i := 0; i < 5; i++ {
-		tempValue := float64(i)
-		data := &AssetData{
-			AssetID: "sensor-001",
-			Values: []TagValue{
-				{Name: "temp", Number: &tempValue},
-			},
-		}
-		jsonData, err := json.Marshal(data)
-		require.NoError(t, err)
-		msg := &nats.Msg{Data: jsonData}
-		handler.HandleAssetData(msg)
-	}
-
-	assert.Equal(t, 5, handler.GetDataCount())
 }

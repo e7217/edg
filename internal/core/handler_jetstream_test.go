@@ -97,9 +97,6 @@ func TestHandleAssetData_WithJetStream(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for published message")
 	}
-
-	// Verify data was stored
-	assert.Equal(t, 1, handler.GetDataCount())
 }
 
 // TestHandleAssetData_WithJetStreamAndStore tests JetStream publish with pass_through
@@ -138,6 +135,8 @@ func TestHandleAssetData_WithJetStreamAndStore(t *testing.T) {
 		Data:    jsonData,
 	}
 
+	beforePublished := jetStreamPublished.Value()
+
 	// Process message
 	handler.HandleAssetData(msg)
 
@@ -146,8 +145,8 @@ func TestHandleAssetData_WithJetStreamAndStore(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, asset)
 
-	// Verify data was still stored (passed through to validated).
-	assert.Equal(t, 1, handler.GetDataCount())
+	// It did pass through: the publish to the validated subject succeeded.
+	assert.Equal(t, beforePublished+1, jetStreamPublished.Value())
 }
 
 func TestHandleAssetData_WithEnricherPublishesMetadata(t *testing.T) {
@@ -201,11 +200,8 @@ func TestHandleAssetData_WithEnricherPublishesMetadata(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("Timeout waiting for enriched published message")
 	}
-
-	handler.mu.Lock()
-	require.Len(t, handler.data, 1)
-	assert.Equal(t, "Factory 1", handler.data[0].Metadata["factory"])
-	handler.mu.Unlock()
+	// The published payload above is the contract; the enrichment applied to
+	// the process's own copy was never observable by anything else.
 }
 
 func TestHandleAssetData_PassThroughPublishesValidatedData(t *testing.T) {
@@ -260,7 +256,6 @@ func TestHandleAssetData_PassThroughPublishesValidatedData(t *testing.T) {
 	asset, err := store.GetAsset("manual-jetstream-sensor")
 	require.NoError(t, err)
 	assert.Nil(t, asset)
-	assert.Equal(t, 1, handler.GetDataCount())
 }
 
 // TestJetStreamPublish_MessagePersistence tests message persistence in JetStream
@@ -329,8 +324,8 @@ func TestJetStreamPublish_MessagePersistence(t *testing.T) {
 func TestNewDataHandler_WithNilJetStream(t *testing.T) {
 	handler := NewDataHandler(nil, nil)
 	require.NotNil(t, handler)
-	assert.NotNil(t, handler.data)
-	assert.Equal(t, 0, len(handler.data))
+	// It must also survive being used, which is the part that mattered.
+	handler.HandleAssetData(&nats.Msg{Subject: "platform.data.asset", Data: []byte(`{"asset_id":"x"}`)})
 }
 
 // TestHandleAssetData_JetStreamPublishError tests handling of publish errors
@@ -361,12 +356,14 @@ func TestHandleAssetData_JetStreamPublishError(t *testing.T) {
 		Data:    jsonData,
 	}
 
+	beforeFailures := jetStreamPublishFailures.Value()
+
 	// This should log an error but not panic
 	// The message won't be published to JetStream because the subject doesn't match
 	handler.HandleAssetData(msg)
 
-	// Data should still be stored in memory
-	assert.Equal(t, 1, handler.GetDataCount())
+	// The publish failure is counted rather than swallowed.
+	assert.Equal(t, beforeFailures+1, jetStreamPublishFailures.Value())
 }
 
 func TestHandleAssetData_PublishErrorDeadLettersMessage(t *testing.T) {

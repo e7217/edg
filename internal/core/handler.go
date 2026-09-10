@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -14,8 +13,6 @@ import (
 
 // DataHandler handles NATS messages for asset data
 type DataHandler struct {
-	mu                 sync.Mutex
-	data               []AssetData           // in-memory storage (PoC)
 	store              *Store                // for undeclared-asset detection
 	js                 nats.JetStreamContext // for publishing to JetStream
 	validatedSubject   string
@@ -132,11 +129,6 @@ var (
 		Name: "edg_core_data_handle_seconds",
 		Help: "Time spent in HandleAssetData on the NATS delivery goroutine. Exceeding the message interval turns the subscription into a slow consumer. Buckets are provisional.",
 	}, metrics.DefaultLatencyBounds)
-
-	dataBufferEntries = metrics.Default.NewGauge(metrics.Desc{
-		Name: "edg_core_data_buffer_entries",
-		Help: "Entries in the in-memory PoC buffer. It is append-only with no truncation, so this only ever grows; see #115.",
-	})
 )
 
 // Label values for the ingest counters.
@@ -197,7 +189,6 @@ func NewDataHandlerWithConfig(js nats.JetStreamContext, store *Store, opts DataH
 	}
 
 	return &DataHandler{
-		data:               make([]AssetData, 0),
 		store:              store,
 		js:                 js,
 		validatedSubject:   validatedSubject,
@@ -261,12 +252,6 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 			validatedData = enrichedData
 		}
 	}
-
-	h.mu.Lock()
-	h.data = append(h.data, data)
-	buffered := len(h.data)
-	h.mu.Unlock()
-	dataBufferEntries.Set(int64(buffered))
 
 	// Publish validated data to JetStream for persistence
 	if h.js != nil {
@@ -335,11 +320,4 @@ func countValueKinds(values []TagValue) {
 			dataValues.With(valueKindEmpty).Inc()
 		}
 	}
-}
-
-// GetDataCount returns the number of stored data entries
-func (h *DataHandler) GetDataCount() int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return len(h.data)
 }
