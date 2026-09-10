@@ -49,6 +49,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The bundled `docker compose` stack could not start from a clean volume. The
+  image bakes `config.prod.yaml`, whose data paths were `/var/lib/edg` — a
+  directory nothing creates, in an image whose data volume is mounted at
+  `/opt/edg/data` and which runs as a non-root user. `restart: unless-stopped`
+  turned the failure into a silent crash loop. The staging and production
+  configs now use `/opt/edg`, which is the install root that
+  `scripts/install.sh`, the container image and the compose volume already
+  agree on, and `scripts/compose-smoke.sh` runs in CI so the stack cannot break
+  this way unnoticed again (#114).
+
+  **Migration.** Only affects a deployment that passed
+  `-config .../config.prod.yaml` or `config.staging.yaml` by hand and created
+  `/var/lib/edg` itself; the container stack never ran, so it has no data to
+  move. Move the old directory before upgrading:
+
+  ```bash
+  sudo systemctl stop edg-core
+  sudo mv /var/lib/edg/* /opt/edg/data/
+  ```
+
+- `templates.dir` in the staging and production configs pointed at
+  `/etc/edg/templates`, which no deployment creates either, so first boot
+  seeded no templates and logged only a warning.
+
 - The `JetStream -> storage` hop now honours the durable, ack-after-write
   boundary described in ADR 0001. The former Telegraf `queue_group` subscription
   did not replay the JetStream backlog after downtime; the built-in durable

@@ -32,6 +32,13 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/Dockerfile.core
+      args:
+        # Selects which deploy/configs/core/config.<ENV>.yaml the image links
+        # to /opt/edg/config.yaml. It is a BUILD arg because the symlink is
+        # made at build time; passing it only at runtime looked like it
+        # selected the config and selected nothing (#114). Rebuild to change
+        # it: `ENV=dev docker compose build edg-core`.
+        ENV: ${ENV:-prod}
     image: edg-core:${VERSION:-latest}
     container_name: edg-core
     restart: unless-stopped
@@ -43,16 +50,20 @@ services:
       # Metrics (9464) is likewise not published: VictoriaMetrics scrapes it
       # over the compose network, and /metrics has no authentication either.
     volumes:
+      # storage.data_dir in the shipped configs. A volume mounted anywhere else
+      # leaves the process writing to the container filesystem, or unable to
+      # write at all (#114).
       - edg-data:/opt/edg/data
     environment:
-      - LOG_LEVEL=${LOG_LEVEL:-info}
-      - ENV=${ENV:-dev}
+      # LOG_LEVEL and ENV used to be passed here and were read by nothing; log
+      # level comes from logging.level in the config file, and ENV is a build
+      # arg above.
+      #
       # Built-in VM sink writes validated data straight to VictoriaMetrics.
       - EDG_SINK_URL=http://edg-victoriametrics:8428
-      # Role credentials live on the data volume so they survive recreation.
-      # Read them with:
+      # Role credentials default to <storage.data_dir>/nats-credentials.json,
+      # which is on the volume above, so they survive recreation. Read them:
       #   docker compose exec edg-core cat /opt/edg/data/nats-credentials.json
-      - EDG_NATS_CREDENTIALS_FILE=/opt/edg/data/nats-credentials.json
     depends_on:
       - edg-victoriametrics
     networks:

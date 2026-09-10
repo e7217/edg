@@ -12,17 +12,21 @@ nats:
     # Empty -> <storage.data_dir>/nats-credentials.json (mode 0600).
     # EDG_NATS_CREDENTIALS_FILE overrides this.
     credentials_file: ""
-  store_dir: /var/lib/edg/data/jetstream
+  store_dir: /opt/edg/data/jetstream
   log_level: info
 
 storage:
-  metadata_db: /var/lib/edg/metadata.db
-  data_dir: /var/lib/edg/data
+  # /opt/edg is the install root for every topology EDG ships: scripts/install.sh
+  # creates /opt/edg/{bin,configs,data}, the container image builds the same
+  # layout, and compose mounts its data volume there. Paths outside it are not
+  # created by anything and leave the process unable to start (#114).
+  metadata_db: /opt/edg/data/metadata.db
+  data_dir: /opt/edg/data
   migrations_dir: embedded
   auto_migrate: true
 
 templates:
-  dir: /etc/edg/templates
+  dir: /opt/edg/templates
 
 alarm:
   window_seconds: 5
