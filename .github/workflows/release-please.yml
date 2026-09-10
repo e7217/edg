@@ -28,13 +28,21 @@ jobs:
         # With the inputs gone, v4 reads release-please-config.json (its
         # default) and that file is the single source of release behaviour.
 
-      # The logic below will be executed when the release is created
-      - name: Checkout code
-        if: ${{ steps.release.outputs.release_created }}
-        uses: actions/checkout@v4
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
 
-      - name: Tag created
-        if: ${{ steps.release.outputs.release_created }}
-        run: |
-          echo "Release created: ${{ steps.release.outputs.tag_name }}"
-          echo "This will trigger the release.yml workflow to build artifacts"
+  # Build the artifacts here rather than letting release.yml watch for the
+  # tag. release-please creates that tag with GITHUB_TOKEN, and GitHub does
+  # not start workflow runs from events created by that token, so a tag
+  # trigger never fires -- v0.1.0 was published with no assets at all.
+  # This job runs inside the same workflow, which a human push to main
+  # triggered, so it is not subject to that guard.
+  build-artifacts:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}

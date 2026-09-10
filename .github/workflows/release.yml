@@ -1,8 +1,26 @@
 name: Release
 
+# Deliberately NOT triggered by `push: tags`.
+#
+# release-please creates the tag with GITHUB_TOKEN, and GitHub does not start
+# workflow runs from events created by that token -- the guard against a
+# workflow triggering itself forever. So a tag trigger here could never fire,
+# and v0.1.0 shipped as an empty release to prove it. The build is invoked
+# directly by release-please.yml instead, which is itself triggered by a human
+# push to main and therefore runs normally.
 on:
-  push:
-    tags: ['v*']
+  workflow_call:
+    inputs:
+      tag:
+        description: Tag to build and attach artifacts to
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build and attach artifacts to (e.g. v0.1.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -33,6 +51,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -47,7 +67,7 @@ jobs:
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           go build \
             -ldflags="-s -w \
-              -X main.Version=${{ github.ref_name }} \
+              -X main.Version=${{ inputs.tag }} \
               -X main.BuildTime=${BUILD_TIME} \
               -X main.GitCommit=${{ github.sha }}" \
             -o edg-core${{ matrix.ext }} \
@@ -73,7 +93,7 @@ jobs:
       - name: Package Release
         run: |
           set -euo pipefail
-          DIST_DIR="edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          DIST_DIR="edg-${{ inputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}"
 
           # Shared with scripts/install-smoke.sh, which builds a bundle the
           # same way and then installs from it in CI. Keeping one script means
@@ -81,14 +101,17 @@ jobs:
           scripts/build-bundle.sh "$DIST_DIR" "${{ matrix.ext }}"
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip -r "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$DIST_DIR"
+            zip -r "edg-${{ inputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$DIST_DIR"
           else
-            tar -czf "edg-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$DIST_DIR"
+            tar -czf "edg-${{ inputs.tag }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$DIST_DIR"
           fi
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
+          # Explicit, because there is no tag ref to infer it from when this
+          # workflow is called rather than triggered by a tag push.
+          tag_name: ${{ inputs.tag }}
           files: |
             edg-*.tar.gz
             edg-*.zip

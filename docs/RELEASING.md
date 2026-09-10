@@ -78,7 +78,8 @@ gh pr view <PR_NUMBER>
 
 When you merge the Release PR:
 
-1. **release-please** creates a Git tag (e.g., `v0.1.0`)
+1. **release-please** creates a Git tag (e.g., `v0.1.0`) and then calls
+   `release.yml` directly, in the same workflow run
 2. **release.yml** workflow triggers on the tag
 3. **Artifacts are built** for all platforms:
    - linux/amd64
@@ -149,6 +150,25 @@ Extract a release artifact and verify version information:
 # Git Commit: def456...
 ```
 
+
+
+### Why release.yml has no tag trigger
+
+It used to trigger on `push: tags: ['v*']` and could never fire. release-please
+creates the tag with `GITHUB_TOKEN`, and GitHub does not start workflow runs
+from events created by that token — the guard that stops a workflow triggering
+itself. `v0.1.0` was published with zero assets because of it.
+
+`release-please.yml` now calls `release.yml` as a reusable workflow when it has
+just created a release. That job runs inside the workflow a human push to main
+triggered, so the guard does not apply.
+
+To attach artifacts to a tag that already exists — a release cut before this
+changed, or a rebuild — dispatch it manually:
+
+```bash
+gh workflow run release.yml --repo <owner>/<repo> -f tag=v0.1.0
+```
 
 ## Release Configuration
 
