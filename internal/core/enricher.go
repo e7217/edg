@@ -3,8 +3,41 @@ package core
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/e7217/edg/internal/metrics"
+)
+
+// Enrichment counters. Stats() reports the same hit/miss numbers per instance
+// and stays as it is -- it is exported API -- but the process creates one
+// Enricher and these are what a scrape can see.
+var (
+	enricherCacheHits = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_enricher_cache_hits_total",
+		Help: "Enrichment lookups served from the in-memory tag cache.",
+	})
+
+	enricherCacheMisses = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_enricher_cache_misses_total",
+		Help: "Enrichment lookups that fell through to the ancestor query. Each one runs a recursive CTE on the NATS delivery goroutine.",
+	})
+
+	enricherFlushes = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_enricher_cache_flushes_total",
+		Help: "Cache flushes triggered by a master-data change. A burst of these is followed by a burst of misses.",
+	})
+
+	enricherLookupFailures = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_enricher_lookup_failures_total",
+		Help: "Ancestor queries that returned an error. The message still goes through, un-enriched.",
+	})
+
+	enricherLookupSeconds = metrics.Default.NewHistogram(metrics.Desc{
+		Name: "edg_core_enricher_ancestor_lookup_seconds",
+		Help: "Duration of the recursive ancestor query behind a cache miss. On SD-card SQLite this is where ingest latency comes from. Buckets are provisional.",
+	}, metrics.DefaultLatencyBounds)
 )
 
 // EnricherOptions configures ontology-based metadata enrichment.
@@ -136,6 +169,22 @@ func (e *Enricher) Flush() {
 
 	e.cache = make(map[string]map[string]string)
 	e.cacheVersion++
+	enricherFlushes.Inc()
+}
+
+// RegisterMetrics exposes this enricher's cache occupancy.
+//
+// It is a method rather than a package-level declaration because the gauge
+// describes one instance, and the test suite creates many; cmd/core calls it
+// once for the production enricher.
+func (e *Enricher) RegisterMetrics(r *metrics.Registry) {
+	if e == nil {
+		return
+	}
+	r.NewFuncGauge(metrics.Desc{
+		Name: "edg_core_enricher_cache_entries",
+		Help: "Assets with cached enrichment tags.",
+	}, func() float64 { return float64(e.Stats().CacheEntries) })
 }
 
 // Stats returns a snapshot of cache counters.
@@ -160,14 +209,19 @@ func (e *Enricher) tagsForAsset(assetID string) (map[string]string, error) {
 		e.cacheHits++
 		tags := cloneStringMap(cached)
 		e.mu.Unlock()
+		enricherCacheHits.Inc()
 		return tags, nil
 	}
 	e.cacheMisses++
 	cacheVersion := e.cacheVersion
 	e.mu.Unlock()
+	enricherCacheMisses.Inc()
 
+	start := time.Now()
 	ancestors, err := e.store.GetAncestors(assetID, e.relationTypes, e.maxDepth)
+	enricherLookupSeconds.Observe(time.Since(start).Seconds())
 	if err != nil {
+		enricherLookupFailures.Inc()
 		return nil, err
 	}
 	tags := tagsFromAncestors(ancestors)

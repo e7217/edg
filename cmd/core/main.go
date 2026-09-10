@@ -16,6 +16,7 @@ import (
 
 	"github.com/e7217/edg/internal/core"
 	"github.com/e7217/edg/internal/httpapi"
+	"github.com/e7217/edg/internal/metrics"
 	"github.com/e7217/edg/internal/natsauth"
 )
 
@@ -229,6 +230,9 @@ func main() {
 		log.Fatalf("Failed to start enricher: %v", err)
 	}
 	defer enricher.Stop()
+	if cfg.Metrics.Enabled {
+		enricher.RegisterMetrics(metrics.Default)
+	}
 
 	dataHandler := core.NewDataHandlerWithConfig(js, store, core.DataHandlerOptions{
 		ValidatedSubject:   cfg.JetStream.ValidatedSubject,

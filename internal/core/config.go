@@ -41,6 +41,11 @@ const EnvNATSCredentialsFile = "EDG_NATS_CREDENTIALS_FILE"
 // nats.auth.credentials_file is empty.
 const defaultCredentialsFileName = "nats-credentials.json"
 
+// DefaultSinkConsumerStatInterval is how often the sink refreshes its
+// JetStream backlog gauges. It is far below a 15s scrape interval, and each
+// refresh is one round trip on a loop that is already talking to the server.
+const DefaultSinkConsumerStatInterval = 15 * time.Second
+
 // CoreConfig contains runtime settings for the embedded core process.
 type CoreConfig struct {
 	NATS               NATSConfig        `yaml:"nats"`
@@ -173,6 +178,10 @@ type SinkConfig struct {
 	BatchMaxSize   int           `yaml:"batch_max_size"`
 	FlushInterval  time.Duration `yaml:"flush_interval"`
 	RequestTimeout time.Duration `yaml:"request_timeout"`
+	// ConsumerStatInterval throttles the JetStream ConsumerInfo round trip
+	// that feeds the backlog gauges. It runs on the drain loop rather than at
+	// scrape time so that scrape traffic can never reach the data path.
+	ConsumerStatInterval time.Duration `yaml:"consumer_stat_interval"`
 }
 
 type JetStreamStreamConfig struct {
@@ -263,6 +272,8 @@ func DefaultCoreConfig() CoreConfig {
 			BatchMaxSize:   500,
 			FlushInterval:  time.Second,
 			RequestTimeout: 5 * time.Second,
+
+			ConsumerStatInterval: DefaultSinkConsumerStatInterval,
 		},
 	}
 }
@@ -381,6 +392,9 @@ func (c *SinkConfig) applyDefaults(defaults SinkConfig) {
 	if c.RequestTimeout == 0 {
 		c.RequestTimeout = defaults.RequestTimeout
 	}
+	if c.ConsumerStatInterval == 0 {
+		c.ConsumerStatInterval = defaults.ConsumerStatInterval
+	}
 }
 
 func (c CoreConfig) validate() error {
@@ -446,6 +460,9 @@ func (c CoreConfig) validate() error {
 		}
 		if c.Sink.RequestTimeout <= 0 {
 			return fmt.Errorf("invalid sink.request_timeout: %s (must be > 0)", c.Sink.RequestTimeout)
+		}
+		if c.Sink.ConsumerStatInterval <= 0 {
+			return fmt.Errorf("invalid sink.consumer_stat_interval: %s (must be > 0)", c.Sink.ConsumerStatInterval)
 		}
 	}
 	return nil
@@ -540,13 +557,14 @@ func (c *JetStreamStreamConfig) UnmarshalYAML(value *yaml.Node) error {
 
 func (c *SinkConfig) UnmarshalYAML(value *yaml.Node) error {
 	var raw struct {
-		Enabled        *bool  `yaml:"enabled"`
-		URL            string `yaml:"url"`
-		ConsumerName   string `yaml:"consumer_name"`
-		Measurement    string `yaml:"measurement"`
-		BatchMaxSize   int    `yaml:"batch_max_size"`
-		FlushInterval  string `yaml:"flush_interval"`
-		RequestTimeout string `yaml:"request_timeout"`
+		Enabled              *bool  `yaml:"enabled"`
+		URL                  string `yaml:"url"`
+		ConsumerName         string `yaml:"consumer_name"`
+		Measurement          string `yaml:"measurement"`
+		BatchMaxSize         int    `yaml:"batch_max_size"`
+		FlushInterval        string `yaml:"flush_interval"`
+		RequestTimeout       string `yaml:"request_timeout"`
+		ConsumerStatInterval string `yaml:"consumer_stat_interval"`
 	}
 	if err := value.Decode(&raw); err != nil {
 		return err
@@ -573,6 +591,13 @@ func (c *SinkConfig) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("invalid sink.request_timeout: %w", err)
 		}
 		c.RequestTimeout = duration
+	}
+	if raw.ConsumerStatInterval != "" {
+		duration, err := time.ParseDuration(raw.ConsumerStatInterval)
+		if err != nil {
+			return fmt.Errorf("invalid sink.consumer_stat_interval: %w", err)
+		}
+		c.ConsumerStatInterval = duration
 	}
 	return nil
 }

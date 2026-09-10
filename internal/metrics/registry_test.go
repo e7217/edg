@@ -1,7 +1,9 @@
 package metrics
 
 import (
+	"expvar"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -239,5 +241,57 @@ func TestConcurrentWritesAndScrapes(t *testing.T) {
 	if !strings.Contains(string(r.Gather()),
 		fmt.Sprintf("edg_test_seconds_count %d", writers*iterations)) {
 		t.Errorf("histogram lost observations")
+	}
+}
+
+// The point of NewCounterVecLegacy: the historical unlabelled expvar counter
+// and the labelled Prometheus family are the same events counted once, so
+// their totals cannot drift.
+func TestCounterVecLegacyKeepsExpvarTotal(t *testing.T) {
+	const expvarName = "edg_test_legacy_vec"
+	r := NewRegistry()
+	v := r.NewCounterVecLegacy(Desc{Name: "edg_test_legacy_vec_total", Help: "h."},
+		"reason", []string{"transport", "http_status"}, expvarName)
+
+	v.With("transport").Add(3)
+	v.With("http_status").Inc()
+	v.With("not-declared").Add(10) // folds into other, still counted in the total
+
+	legacy, ok := expvar.Get(expvarName).(*expvar.Int)
+	if !ok {
+		t.Fatalf("%s is %T, want *expvar.Int", expvarName, expvar.Get(expvarName))
+	}
+	if got := legacy.Value(); got != 14 {
+		t.Errorf("expvar total = %d, want 14", got)
+	}
+	if got := v.Value(); got != 14 {
+		t.Errorf("CounterVec.Value() = %d, want 14", got)
+	}
+
+	// The children must sum to the same number, or one surface is lying.
+	var sum int64
+	for _, line := range strings.Split(string(r.Gather()), "\n") {
+		if !strings.HasPrefix(line, "edg_test_legacy_vec_total{") {
+			continue
+		}
+		_, value, _ := strings.Cut(line, " ")
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			t.Fatalf("unparseable sample %q", line)
+		}
+		sum += n
+	}
+	if sum != 14 {
+		t.Errorf("children sum to %d, but the expvar total is 14", sum)
+	}
+}
+
+// A vec without a legacy total must not touch the expvar global.
+func TestCounterVecWithoutLegacyDoesNotPublish(t *testing.T) {
+	r := NewRegistry()
+	r.NewCounterVec(Desc{Name: "edg_test_plain_vec_total", Help: "h."},
+		"reason", []string{"a"}).With("a").Inc()
+	if v := expvar.Get("edg_test_plain_vec_total"); v != nil {
+		t.Errorf("NewCounterVec published %T to the expvar global", v)
 	}
 }

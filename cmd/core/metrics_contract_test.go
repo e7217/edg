@@ -14,26 +14,32 @@ import (
 	"github.com/e7217/edg/internal/metrics"
 )
 
-// legacyCounters maps every counter published to the expvar global registry to
-// its Prometheus name. Both surfaces are operator contracts: ADR 0001 tables
-// the expvar names and the user guide lists them, so a rename here is a
-// breaking change, not a cleanup.
-var legacyCounters = map[string]string{
-	"edg_core_jetstream_publish_failures":     "edg_core_jetstream_publish_failures_total",
-	"edg_core_jetstream_dead_letters":         "edg_core_jetstream_dead_letters_total",
-	"edg_core_jetstream_dead_letter_failures": "edg_core_jetstream_dead_letter_failures_total",
-	"edg_core_undeclared_assets":              "edg_core_undeclared_assets_total",
-	"edg_core_sink_lines_written":             "edg_core_sink_lines_written_total",
-	"edg_core_sink_batches_written":           "edg_core_sink_batches_written_total",
-	"edg_core_sink_write_failures":            "edg_core_sink_write_failures_total",
-	"edg_core_sink_decode_failures":           "edg_core_sink_decode_failures_total",
-	"edg_core_adapter_status_invalid":         "edg_core_adapter_status_invalid_total",
-	"edg_core_adapter_status_dropped":         "edg_core_adapter_status_dropped_total",
-	"edg_core_adapter_stale_total":            "edg_core_adapter_stale_total",
-	"edg_core_adapter_probe_recovered":        "edg_core_adapter_probe_recovered_total",
-	"edg_core_adapter_probes_skipped":         "edg_core_adapter_probes_skipped_total",
-	"edg_core_adapter_stale_averted":          "edg_core_adapter_stale_averted_total",
-	"edg_core_adapter_forget_averted":         "edg_core_adapter_forget_averted_total",
+// legacyCounter records one counter published to the expvar global registry.
+// Both surfaces are operator contracts: ADR 0001 tables the expvar names and
+// the user guide lists them, so a rename is a breaking change, not a cleanup.
+type legacyCounter struct {
+	prom string
+	// labelled families keep the expvar name as an unlabelled grand total fed
+	// by every child, so their /metrics side has no single matching sample.
+	labelled bool
+}
+
+var legacyCounters = map[string]legacyCounter{
+	"edg_core_jetstream_publish_failures":     {prom: "edg_core_jetstream_publish_failures_total"},
+	"edg_core_jetstream_dead_letters":         {prom: "edg_core_jetstream_dead_letters_total"},
+	"edg_core_jetstream_dead_letter_failures": {prom: "edg_core_jetstream_dead_letter_failures_total", labelled: true},
+	"edg_core_undeclared_assets":              {prom: "edg_core_undeclared_assets_total", labelled: true},
+	"edg_core_sink_lines_written":             {prom: "edg_core_sink_lines_written_total"},
+	"edg_core_sink_batches_written":           {prom: "edg_core_sink_batches_written_total"},
+	"edg_core_sink_write_failures":            {prom: "edg_core_sink_write_failures_total", labelled: true},
+	"edg_core_sink_decode_failures":           {prom: "edg_core_sink_decode_failures_total"},
+	"edg_core_adapter_status_invalid":         {prom: "edg_core_adapter_status_invalid_total"},
+	"edg_core_adapter_status_dropped":         {prom: "edg_core_adapter_status_dropped_total"},
+	"edg_core_adapter_stale_total":            {prom: "edg_core_adapter_stale_total"},
+	"edg_core_adapter_probe_recovered":        {prom: "edg_core_adapter_probe_recovered_total"},
+	"edg_core_adapter_probes_skipped":         {prom: "edg_core_adapter_probes_skipped_total"},
+	"edg_core_adapter_stale_averted":          {prom: "edg_core_adapter_stale_averted_total"},
+	"edg_core_adapter_forget_averted":         {prom: "edg_core_adapter_forget_averted_total"},
 }
 
 // TestDebugVarsSurfaceIsExactlyTheLegacyCounters is the guard behind the rule
@@ -88,50 +94,70 @@ func TestLegacyCountersAreExpvarInts(t *testing.T) {
 	}
 }
 
-// One storage, two surfaces: the /metrics value must be the expvar value.
-func TestLegacyCountersAgreeAcrossSurfaces(t *testing.T) {
-	// Move the counters off zero so an implementation that reads the wrong
-	// storage cannot pass by accident.
-	for i, name := range sortedKeys(legacyCounters) {
+// Every legacy counter must appear on /metrics under its Prometheus name.
+func TestLegacyCountersAreExposedOnMetrics(t *testing.T) {
+	totals := familyTotals(t, metrics.Default.Gather())
+	for expvarName, lc := range legacyCounters {
+		if _, ok := totals[lc.prom]; !ok {
+			t.Errorf("%s (expvar %s) is not exposed on /metrics", lc.prom, expvarName)
+		}
+	}
+}
+
+// One storage, two surfaces: for the unlabelled families the /metrics sample
+// is literally the expvar.Int, so writing one must move the other.
+//
+// The labelled families are excluded on purpose. Writing to their expvar total
+// directly, as this test does, bypasses the children -- the sum-equals-total
+// invariant only holds for increments that go through the Vec, and that is
+// covered where it can be driven properly, in
+// internal/metrics.TestCounterVecLegacyKeepsExpvarTotal.
+func TestLegacyCountersShareStorage(t *testing.T) {
+	names := make([]string, 0, len(legacyCounters))
+	for name, lc := range legacyCounters {
+		if !lc.labelled {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+
+	// Move each counter to a distinct non-zero value so an implementation that
+	// reads the wrong storage cannot pass by coincidence.
+	for i, name := range names {
 		expvar.Get(name).(*expvar.Int).Add(int64(i + 1))
 	}
 
-	samples := parseExposition(t, metrics.Default.Gather())
-	for expvarName, promName := range legacyCounters {
-		want := expvar.Get(expvarName).(*expvar.Int).Value()
-		got, ok := samples[promName]
-		if !ok {
-			t.Errorf("%s is not exposed on /metrics", promName)
-			continue
-		}
-		if got != strconv.FormatInt(want, 10) {
-			t.Errorf("%s = %s on /metrics but %d on /debug/vars", promName, got, want)
+	totals := familyTotals(t, metrics.Default.Gather())
+	for _, name := range names {
+		want := expvar.Get(name).(*expvar.Int).Value()
+		if got := totals[legacyCounters[name].prom]; got != want {
+			t.Errorf("%s = %d on /metrics but %d on /debug/vars",
+				legacyCounters[name].prom, got, want)
 		}
 	}
 }
 
-func sortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
-}
-
-// parseExposition maps unlabelled sample names to their rendered value.
-func parseExposition(t *testing.T, out []byte) map[string]string {
+// familyTotals sums every sample of each family, so a labelled family and an
+// unlabelled one are compared the same way.
+func familyTotals(t *testing.T, out []byte) map[string]int64 {
 	t.Helper()
-	samples := make(map[string]string)
+	totals := make(map[string]int64)
 	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		name, value, ok := strings.Cut(line, " ")
-		if !ok || strings.Contains(name, "{") {
+		if !ok {
 			continue
 		}
-		samples[name] = value
+		if i := strings.IndexByte(name, '{'); i >= 0 {
+			name = name[:i]
+		}
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			continue // histogram sums and float gauges are not counters
+		}
+		totals[name] += n
 	}
-	return samples
+	return totals
 }

@@ -28,13 +28,22 @@ var DefaultLatencyBounds = []float64{
 type Counter struct {
 	d Desc
 	v *expvar.Int
+	// total, when set, is a legacy unlabelled counter this one also feeds. It
+	// is how a labelled Prometheus family keeps the single expvar number that
+	// ADR 0001 and the user guide document.
+	total *expvar.Int
 }
 
-// Add increments the counter.
-func (c *Counter) Add(delta int64) { c.v.Add(delta) }
+// Add increments the counter, and the legacy total behind it if there is one.
+func (c *Counter) Add(delta int64) {
+	c.v.Add(delta)
+	if c.total != nil {
+		c.total.Add(delta)
+	}
+}
 
 // Inc increments by one.
-func (c *Counter) Inc() { c.v.Add(1) }
+func (c *Counter) Inc() { c.Add(1) }
 
 // Value returns the current value.
 func (c *Counter) Value() int64 { return c.v.Value() }
@@ -85,6 +94,8 @@ type CounterVec struct {
 	order    []string
 	other    *Counter
 	rejected *expvar.Int // surfaced via the registry's rejectionCollector
+	// total is the legacy unlabelled expvar counter, when this family has one.
+	total *expvar.Int
 }
 
 // NewCounterVec registers a labelled counter over a fixed set of values.
@@ -93,6 +104,20 @@ type CounterVec struct {
 // makes an unbounded series set a one-line mistake away, and these metrics land
 // in the same VictoriaMetrics instance as the plant's telemetry.
 func (r *Registry) NewCounterVec(d Desc, label string, allowed []string) *CounterVec {
+	return r.newCounterVec(d, label, allowed, nil)
+}
+
+// NewCounterVecLegacy is NewCounterVec for a family that must also keep an
+// unlabelled expvar counter under its historical name.
+//
+// Every child feeds the same expvar.Int, so the sum of the Prometheus children
+// equals the expvar total by construction rather than by convention -- there
+// is no separate total series to drift out of step with them.
+func (r *Registry) NewCounterVecLegacy(d Desc, label string, allowed []string, expvarName string) *CounterVec {
+	return r.newCounterVec(d, label, allowed, expvar.NewInt(expvarName))
+}
+
+func (r *Registry) newCounterVec(d Desc, label string, allowed []string, total *expvar.Int) *CounterVec {
 	d.Type = TypeCounter
 	checkLabel(d.Name, label)
 	if len(allowed)+1 > maxSeriesPerVec {
@@ -105,14 +130,15 @@ func (r *Registry) NewCounterVec(d Desc, label string, allowed []string) *Counte
 		label:    label,
 		children: make(map[string]*Counter, len(allowed)+1),
 		order:    append([]string(nil), allowed...),
-		other:    &Counter{d: d, v: new(expvar.Int)},
+		other:    &Counter{d: d, v: new(expvar.Int), total: total},
 		rejected: new(expvar.Int),
+		total:    total,
 	}
 	for _, value := range allowed {
 		if _, dup := v.children[value]; dup {
 			panic(fmt.Sprintf("metrics: %s declares label value %q twice", d.Name, value))
 		}
-		v.children[value] = &Counter{d: d, v: new(expvar.Int)}
+		v.children[value] = &Counter{d: d, v: new(expvar.Int), total: total}
 	}
 	sort.Strings(v.order)
 	r.add(d, v)
@@ -129,6 +155,19 @@ func (v *CounterVec) With(value string) *Counter {
 	}
 	v.rejected.Add(1)
 	return v.other
+}
+
+// Value returns the family total: the legacy expvar counter when there is one,
+// otherwise the sum of the children.
+func (v *CounterVec) Value() int64 {
+	if v.total != nil {
+		return v.total.Value()
+	}
+	sum := v.other.Value()
+	for _, c := range v.children {
+		sum += c.Value()
+	}
+	return sum
 }
 
 func (v *CounterVec) desc() Desc  { return v.d }

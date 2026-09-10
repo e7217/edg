@@ -39,15 +39,20 @@ var (
 		Help: "Messages written to the dead-letter subject.",
 	}, "edg_core_jetstream_dead_letters")
 
-	jetStreamDeadLetterFails = metrics.Default.NewCounterLegacy(metrics.Desc{
+	jetStreamDeadLetterFails = metrics.Default.NewCounterVecLegacy(metrics.Desc{
 		Name: "edg_core_jetstream_dead_letter_failures_total",
-		Help: "Dead-letter attempts that themselves failed. These messages are lost.",
-	}, "edg_core_jetstream_dead_letter_failures")
+		Help: "Dead-letter attempts that themselves failed. These messages are lost. stage=encode is a bug in this process; stage=publish is JetStream refusing the write.",
+	}, "stage", []string{deadLetterStageEncode, deadLetterStagePublish},
+		"edg_core_jetstream_dead_letter_failures")
 
-	undeclaredAssets = metrics.Default.NewCounterLegacy(metrics.Desc{
+	// The policy label says what happened to the data, not just that it was
+	// undeclared: pass_through means it reached storage un-enriched,
+	// dead_letter means it did not reach storage at all.
+	undeclaredAssets = metrics.Default.NewCounterVecLegacy(metrics.Desc{
 		Name: "edg_core_undeclared_assets_total",
-		Help: "Messages whose asset_id has no master-data record, counted before unknown_asset_policy is applied.",
-	}, "edg_core_undeclared_assets")
+		Help: "Messages whose asset_id has no master-data record, labelled with the unknown_asset_policy that was applied.",
+	}, "policy", []string{UnknownAssetPolicyPassThrough, UnknownAssetPolicyDeadLetter},
+		"edg_core_undeclared_assets")
 
 	// Adapter runtime status (ADR 0008).
 	adapterStatusInvalid = metrics.Default.NewCounterLegacy(metrics.Desc{
@@ -84,6 +89,66 @@ var (
 		Name: "edg_core_adapter_forget_averted_total",
 		Help: "Registry evictions abandoned because the adapter reported in again before the forget deadline.",
 	}, "edg_core_adapter_forget_averted")
+)
+
+// New instrumentation on the ingest path. None of this existed before: the
+// process could count its failures but not its successes, so no failure rate
+// could be computed from what it published.
+var (
+	dataMessagesReceived = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_data_messages_received_total",
+		Help: "Messages accepted on platform.data.asset. This is the denominator every other ingest counter is measured against.",
+	})
+
+	dataDecodeFailures = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_data_decode_failures_total",
+		Help: "Messages on platform.data.asset that were not valid asset-data JSON. They are dropped without a dead letter.",
+	})
+
+	// The VM sink discards every value without a numeric reading, so the kind
+	// split is what turns "messages received" into "points that can reach
+	// storage".
+	dataValues = metrics.Default.NewCounterVec(metrics.Desc{
+		Name: "edg_core_data_values_total",
+		Help: "Tag values received by kind. Only kind=number reaches VictoriaMetrics; the rest are dropped by the sink encoder.",
+	}, "kind", []string{valueKindNumber, valueKindText, valueKindFlag, valueKindEmpty})
+
+	enrichFailures = metrics.Default.NewCounterVec(metrics.Desc{
+		Name: "edg_core_enrich_failures_total",
+		Help: "Enrichment failures. The message still goes through un-enriched, so this is silent data-quality loss rather than an outage.",
+	}, "stage", []string{enrichStageEnrich, enrichStageEncode})
+
+	jetStreamPublished = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_jetstream_published_total",
+		Help: "Validated messages successfully published to JetStream.",
+	})
+
+	// The single most load-bearing metric here. HandleAssetData runs on the
+	// NATS delivery goroutine and does a synchronous AssetExists, enrichment
+	// that can fall through to a recursive CTE, and a JetStream publish. If it
+	// stops fitting inside the message interval the subscription becomes a
+	// slow consumer and messages are dropped silently.
+	dataHandleSeconds = metrics.Default.NewHistogram(metrics.Desc{
+		Name: "edg_core_data_handle_seconds",
+		Help: "Time spent in HandleAssetData on the NATS delivery goroutine. Exceeding the message interval turns the subscription into a slow consumer. Buckets are provisional.",
+	}, metrics.DefaultLatencyBounds)
+
+	dataBufferEntries = metrics.Default.NewGauge(metrics.Desc{
+		Name: "edg_core_data_buffer_entries",
+		Help: "Entries in the in-memory PoC buffer. It is append-only with no truncation, so this only ever grows; see #115.",
+	})
+)
+
+// Label values for the ingest counters.
+const (
+	deadLetterStageEncode  = "encode"
+	deadLetterStagePublish = "publish"
+	valueKindNumber        = "number"
+	valueKindText          = "text"
+	valueKindFlag          = "flag"
+	valueKindEmpty         = "empty"
+	enrichStageEnrich      = "enrich"
+	enrichStageEncode      = "encode"
 )
 
 // errUndeclaredAsset is the dead-letter reason when an undeclared asset_id is
@@ -157,17 +222,24 @@ func NewDataHandlerWithSubjects(js nats.JetStreamContext, store *Store, validate
 
 // HandleAssetData processes incoming NATS messages
 func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
+	start := time.Now()
+	defer func() { dataHandleSeconds.Observe(time.Since(start).Seconds()) }()
+
+	dataMessagesReceived.Inc()
+
 	var data AssetData
 	if err := json.Unmarshal(msg.Data, &data); err != nil {
+		dataDecodeFailures.Inc()
 		log.Printf("[Core] Error parsing message: %v", err)
 		return
 	}
+	countValueKinds(data.Values)
 
 	// Undeclared assets follow the configured unknown_asset_policy. Master data is
 	// created explicitly (API/CLI/UI/import); the data plane no longer auto-registers.
 	if h.store != nil {
 		if exists, _ := h.store.AssetExists(data.AssetID); !exists {
-			undeclaredAssets.Add(1)
+			undeclaredAssets.With(h.unknownAssetPolicy).Inc()
 			if h.unknownAssetPolicy == UnknownAssetPolicyDeadLetter {
 				log.Printf("[Core] undeclared asset -> dead-letter: %s", data.AssetID)
 				h.publishDeadLetter(msg, errUndeclaredAsset)
@@ -180,8 +252,10 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 	validatedData := msg.Data
 	if h.enricher != nil {
 		if err := h.enricher.Enrich(&data); err != nil {
+			enrichFailures.With(enrichStageEnrich).Inc()
 			log.Printf("[Core] Failed to enrich asset data: %v", err)
 		} else if enrichedData, err := json.Marshal(data); err != nil {
+			enrichFailures.With(enrichStageEncode).Inc()
 			log.Printf("[Core] Failed to encode enriched asset data: %v", err)
 		} else {
 			validatedData = enrichedData
@@ -190,7 +264,9 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 
 	h.mu.Lock()
 	h.data = append(h.data, data)
+	buffered := len(h.data)
 	h.mu.Unlock()
+	dataBufferEntries.Set(int64(buffered))
 
 	// Publish validated data to JetStream for persistence
 	if h.js != nil {
@@ -198,6 +274,8 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 			jetStreamPublishFailures.Add(1)
 			log.Printf("[Core] Failed to publish to JetStream: %v", err)
 			h.publishDeadLetter(msg, err)
+		} else {
+			jetStreamPublished.Inc()
 		}
 	}
 
@@ -229,16 +307,34 @@ func (h *DataHandler) publishDeadLetter(msg *nats.Msg, publishErr error) {
 	}
 	data, err := json.Marshal(envelope)
 	if err != nil {
-		jetStreamDeadLetterFails.Add(1)
+		jetStreamDeadLetterFails.With(deadLetterStageEncode).Inc()
 		log.Printf("[Core] Failed to encode dead-letter message: %v", err)
 		return
 	}
 	if _, err := h.js.Publish(h.deadLetterSubject, data); err != nil {
-		jetStreamDeadLetterFails.Add(1)
+		jetStreamDeadLetterFails.With(deadLetterStagePublish).Inc()
 		log.Printf("[Core] Failed to publish dead-letter message: %v", err)
 		return
 	}
 	jetStreamDeadLetters.Add(1)
+}
+
+// countValueKinds records the shape of an incoming payload. The sink writes
+// only numeric readings, so this is where a plant that reports everything as
+// text becomes visible instead of just producing an empty dashboard.
+func countValueKinds(values []TagValue) {
+	for _, v := range values {
+		switch {
+		case v.Number != nil:
+			dataValues.With(valueKindNumber).Inc()
+		case v.Text != nil:
+			dataValues.With(valueKindText).Inc()
+		case v.Flag != nil:
+			dataValues.With(valueKindFlag).Inc()
+		default:
+			dataValues.With(valueKindEmpty).Inc()
+		}
+	}
 }
 
 // GetDataCount returns the number of stored data entries
