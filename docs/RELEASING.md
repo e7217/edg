@@ -80,7 +80,7 @@ When you merge the Release PR:
 
 1. **release-please** creates a Git tag (e.g., `v0.1.0`) and then calls
    `release.yml` directly, in the same workflow run
-2. **release.yml** workflow triggers on the tag
+2. **release.yml** runs as a called workflow, with the tag passed in
 3. **Artifacts are built** for all platforms:
    - linux/amd64
    - linux/arm64
@@ -182,8 +182,9 @@ Two settings are load-bearing and were verified with
 `npx release-please release-pr --dry-run`:
 
 - `include-component-in-tag: false` — without it, manifest mode tags releases
-  as `edg-v0.1.0`, and `release.yml` triggers on `v*`, so the builder would
-  never run.
+  as `edg-v0.1.0`. Go modules require `vX.Y.Z` tags, so `go get
+  github.com/e7217/edg@v0.1.0` would not resolve, and the scheme would not
+  match the `v0.1.0` already published.
 - `initial-version: "0.1.0"` — release-please treats "no existing tag" as an
   initial release and defaults to `1.0.0`. `bump-minor-pre-major` does not
   apply, because there is no previous version to bump from.
