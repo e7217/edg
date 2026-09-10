@@ -19,6 +19,11 @@ env:
   # go.mod, adapters/go/sdk/go.mod and the example module — they are kept in
   # lockstep so a contributor who can build the core can also build the SDK.
   GO_VERSION: "1.24.0"
+  # promtool validates the exposition format. It is a CI binary, never a
+  # go.mod entry: ADR 0009 rejected client_golang precisely to keep the
+  # dependency graph unchanged, and pulling Prometheus into go.mod to test the
+  # encoder would undo that.
+  PROMETHEUS_VERSION: "2.53.3"
 
 jobs:
   # Job id and check name must stay "test": the repository ruleset on main
@@ -54,6 +59,86 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: e7217/edg
           fail_ci_if_error: false
+
+  metrics-exposition:
+    name: Prometheus exposition
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install promtool
+        run: |
+          set -euo pipefail
+          url="https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz"
+          curl -fsSL "$url" -o /tmp/prometheus.tar.gz
+          tar -xzf /tmp/prometheus.tar.gz -C /tmp
+          sudo install "/tmp/prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+          promtool --version
+
+      - name: Check the golden exposition
+        # The golden file covers the encoder's edge cases: escapes, infinities,
+        # histogram cumulativeness, the "other" fold.
+        run: promtool check metrics < internal/metrics/testdata/metrics_golden.txt
+
+      - name: Check a live scrape
+        # The golden file only contains fixtures, so it cannot catch a real
+        # metric declared with a name promlint rejects. This starts the actual
+        # binary with the production config (http.enabled: false, so the API
+        # listener is not even up) and validates everything it really serves.
+        run: |
+          set -euo pipefail
+          go build -o /tmp/edg-core ./cmd/core
+          root=$(mktemp -d)
+          mkdir -p "$root/data/jetstream" "$root/templates"
+          sed -e "s#/var/lib/edg/data/jetstream#$root/data/jetstream#" \
+              -e "s#/var/lib/edg/metadata.db#$root/metadata.db#" \
+              -e "s#/var/lib/edg/data#$root/data#" \
+              -e "s#/etc/edg/templates#$root/templates#" \
+              -e "s#^  address: 0.0.0.0:9464#  address: 127.0.0.1:19464#" \
+              deploy/configs/core/config.prod.yaml > "$root/config.yaml"
+
+          /tmp/edg-core -config "$root/config.yaml" > "$root/core.log" 2>&1 &
+          core_pid=$!
+          trap 'kill $core_pid 2>/dev/null || true' EXIT
+
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:19464/metrics -o "$root/metrics.txt"; then
+              break
+            fi
+            sleep 0.5
+          done
+          if [ ! -s "$root/metrics.txt" ]; then
+            echo "::error::/metrics never became reachable"
+            cat "$root/core.log"
+            exit 1
+          fi
+
+          promtool check metrics < "$root/metrics.txt"
+          echo "families=$(grep -c '^# HELP' "$root/metrics.txt") series=$(grep -vc '^#' "$root/metrics.txt")"
+
+      - name: Assert internal/metrics is stdlib-only
+        # ADR 0009's central claim, and the reason the encoder is hand-written
+        # at all. A third-party import here means the ADR needs amending, not
+        # that this check needs relaxing.
+        run: |
+          set -euo pipefail
+          # A stdlib import path has no dot in its first segment; the
+          # package's own module path is excluded.
+          module=$(go list -m)
+          external=$(go list -deps ./internal/metrics \
+            | grep -v "^${module}\(/\|$\)" \
+            | awk -F/ '$1 ~ /\./')
+          if [ -n "$external" ]; then
+            echo "::error::internal/metrics imports non-stdlib packages:"
+            echo "$external"
+            exit 1
+          fi
 
   go-sdk:
     # adapters/go/sdk is a separate module and the repository has no go.work,

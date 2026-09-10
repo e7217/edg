@@ -185,8 +185,9 @@ plain NATS pub/sub, so adapters that need stronger end-to-end guarantees should
 retry or buffer before publishing.
 
 If publishing to `platform.data.validated` fails, core attempts to publish a JSON
-failure envelope to `platform.data.deadletter`. Monitor these expvar counters on
-the core process:
+failure envelope to `platform.data.deadletter`. Monitor these counters on the
+core process — the `expvar` name at `/debug/vars`, the `_total` name at
+`/metrics` (see [Metrics](#metrics)); they are the same counter:
 
 - `edg_core_jetstream_publish_failures`
 - `edg_core_jetstream_dead_letters`
@@ -210,18 +211,31 @@ sink:
   batch_max_size: 500
   flush_interval: 1s
   request_timeout: 5s
+  consumer_stat_interval: 15s  # how often the backlog gauges are refreshed
 ```
 
 Each numeric value becomes one metric named `edg_data_number`, tagged with
 `asset_id`, `name`, `unit`, `quality`, and any enrichment metadata. Adapter
 timestamps (epoch milliseconds) are preserved.
 
-Sink health is exposed via expvar on the core process:
+Sink health is exposed on the core process at `/debug/vars` and `/metrics`:
 
-- `edg_core_sink_lines_written`
+- `edg_core_sink_lines_written` — line-protocol lines, i.e. time series points,
+  not messages. Values without a numeric reading produce no line.
 - `edg_core_sink_batches_written`
 - `edg_core_sink_write_failures`
 - `edg_core_sink_decode_failures`
+
+`/metrics` adds what a counter alone cannot answer — is the sink keeping up:
+
+| Metric | Why it matters |
+| --- | --- |
+| `edg_core_sink_consumer_pending` | Messages waiting in the stream for the sink. **A sustained climb is the single most important warning in this system**: VictoriaMetrics is slower than the plant, and the stream will eventually hit `max_bytes` and discard the oldest data. |
+| `edg_core_sink_write_seconds` | Write latency. Compare its tail with `request_timeout`. |
+| `edg_core_sink_write_failures_total{reason}` | `transport` means VictoriaMetrics was unreachable; `http_status` means it answered and refused. |
+| `edg_core_sink_messages_acked_total{outcome="poison"}` | Batches acked with nothing numeric to write. **This data is dropped, not stored.** |
+| `edg_core_sink_fetch_errors_total` | The consumer stopped delivering. Without this, that looks exactly like an idle plant. |
+| `edg_core_sink_up` | 1 while the drain loop is running. |
 
 **Data Format:**
 Incoming JSON from adapters:
@@ -249,8 +263,10 @@ whose `asset_id` has no declared Asset record with `unknown_asset_policy`.
 | `pass_through` | Default. The message is published to the validated data subject un-enriched (no ontology metadata is added). No Asset record is created. |
 | `dead_letter` | The message is routed to the dead-letter subject instead of the validated subject. |
 
-Either way, an undeclared-asset counter (`edg_core_undeclared_assets`, expvar) is
-incremented for operator visibility.
+Either way, an undeclared-asset counter is incremented for operator visibility:
+`edg_core_undeclared_assets` at `/debug/vars`, and
+`edg_core_undeclared_assets_total{policy}` at `/metrics`, where the label says
+which of the two behaviours above was applied.
 
 ```yaml
 unknown_asset_policy: pass_through
@@ -517,8 +533,95 @@ require a bearer token** — paste it into the token field at the top of the pag
 live push updates are a planned enhancement. Keep the HTTP address bound to
 localhost unless a token is configured.
 
+## Metrics
+
+EDG Core serves Prometheus text exposition at `/metrics`. See
+[ADR 0009](adr/0009-prometheus-metrics.md) for the design.
+
+```yaml
+metrics:
+  enabled: true
+  # A listener of core's own. Empty means /metrics is served only on the NATS
+  # monitoring port, which is loopback by default -- unreachable from a
+  # scraper in another container.
+  address: 0.0.0.0:9464
+```
+
+It is reachable at two addresses:
+
+| Address | When to use it |
+| --- | --- |
+| `http://<nats.http_host>:<nats.http_port>/metrics` | Always on, loopback by default. Good for `curl` on the box or `docker compose exec`. |
+| `http://<metrics.address>/metrics` | The one a scraper uses. Container deployments must set this; the shipped configs use `0.0.0.0:9464`. |
+
+> **`/metrics` is not authenticated, on either address.** Hardening the REST
+> API with `http.token_env` does not harden it. It carries no secrets and no
+> master data, but it does reveal counts, rates and the build stamp — keep it
+> on a trusted network. The bundled `compose.yml` deliberately does not publish
+> 9464 to the host; VictoriaMetrics scrapes it over the compose network.
+
+A bind failure is never fatal: core logs it and keeps running. Metrics are how
+you learn the gateway is unwell, not a precondition for it running.
+
+### Scraping
+
+VictoriaMetrics scrapes it directly — no separate Prometheus is needed. The
+bundled stack ships `deploy/configs/victoriametrics/scrape.yml` and enables it
+with `-promscrape.config`. Check the targets with:
+
+```bash
+curl -s localhost:8428/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, health}'
+```
+
+### Where to look first
+
+| Question | Metric |
+| --- | --- |
+| Is the gateway keeping up? | `edg_core_sink_consumer_pending` |
+| Is data being dropped before storage? | `edg_core_sink_messages_acked_total{outcome="poison"}`, `edg_core_data_values_total{kind}` (only `number` reaches VictoriaMetrics) |
+| Is ingest about to become a slow consumer? | `edg_core_data_handle_seconds` — if its tail approaches the interval between messages, NATS starts dropping deliveries silently |
+| Is the stream about to discard old data? | `edg_core_js_bytes` against `edg_core_js_stream_max_bytes` |
+| Is an adapter down? | `edg_core_adapters{availability}` for the fleet, `edg_core_adapter_up{adapter_id}` for one |
+| Is the box about to die? | `process_resident_memory_bytes`, `process_open_fds` against `process_max_fds`, `go_goroutines` |
+| Is SQLite the bottleneck? | `edg_core_store_connection_wait_seconds_total`, `edg_core_enricher_ancestor_lookup_seconds` |
+| Is an alarm storm building? | `edg_core_alarm_groups_pending` — the per-alarm cost grows with it |
+
+`edg_core_adapter_up` is derived from staleness, not from what the adapter last
+reported. An adapter that crashed never gets to publish that it stopped, so
+`edg_core_adapters_by_run_state` will keep showing it as `running` while
+`edg_core_adapter_up` correctly reads 0.
+
+### Cardinality
+
+Series count is a property of the code, not of your plant: about 95 families
+and 316 series regardless of how many assets, tags or request paths exist.
+`edg_core_metrics_series` reports the current number.
+
+Labels never carry asset ids, tag names or URL paths. The one identifier label
+is `adapter_id`, and it is capped:
+
+```yaml
+adapters:
+  metrics_max_tracked: 200   # -1 exposes only the aggregates
+```
+
+Adapters past the cap fold into `adapter_id="__overflow__"` and
+`edg_core_adapter_series_dropped_total` records that it happened; the aggregate
+`edg_core_adapters` still counts every adapter. **Give adapters stable ids.** An
+adapter that generates a fresh id on every restart leaks series until it hits
+the cap — the cap is a mitigation, not a fix.
+
+### `/debug/vars`
+
+The fifteen historical `expvar` counters are unchanged and still served at
+`/debug/vars` on the monitoring port. Each has a `/metrics` counterpart with the
+`_total` suffix, backed by the same storage, so the two can never disagree.
+Nothing else is published there — see [ADR 0009](adr/0009-prometheus-metrics.md)
+for why that matters on an unauthenticated port.
+
 ## Monitoring
 
+- **Metrics**: see [Metrics](#metrics) above.
 - **NATS Monitor**: http://localhost:8222 — bound to loopback by default
   (`nats.http_host`). It serves `/varz`, `/connz` and `/debug/vars` with no
   authentication of any kind, so exposing it publicly leaks the subject
