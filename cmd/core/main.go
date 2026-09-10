@@ -237,6 +237,31 @@ func main() {
 		Window:            time.Duration(cfg.Alarm.WindowSeconds) * time.Second,
 		MaxTraversalDepth: cfg.Alarm.MaxTraversalDepth,
 	})
+	// Adapter runtime status (ADR 0008). The registry is in-memory: runtime
+	// liveness is volatile, and a persisted "connected" is a lie after a
+	// restart. Recovery is by hello broadcast, not by a table.
+	var adapterRegistry *core.AdapterRegistry
+	var adapterHandler *core.AdapterHandler
+	if cfg.Adapters.Enabled {
+		adapterHandler = core.NewAdapterHandler(nil, core.AdapterHandlerOptions{
+			ProbeTimeout: cfg.Adapters.ProbeTimeout,
+		})
+		adapterRegistry = core.NewAdapterRegistry(core.AdapterRegistryOptions{
+			Publisher:   eventPublisher,
+			Prober:      adapterHandler,
+			MinInterval: cfg.Adapters.MinInterval,
+			MaxInterval: cfg.Adapters.MaxInterval,
+			StaleFloor:  cfg.Adapters.StaleAfterFloor,
+			ForgetAfter: cfg.Adapters.ForgetAfter,
+			MaxProbes:   cfg.Adapters.MaxConcurrentProbes,
+			ProbeOnMiss: cfg.Adapters.ProbeOnMiss,
+		})
+		adapterHandler.SetRegistry(adapterRegistry)
+		adapterRegistry.Start()
+		defer adapterRegistry.Stop()
+		defer adapterHandler.Stop()
+	}
+
 	serviceCtx, stopServices := context.WithCancel(context.Background())
 	defer stopServices()
 
@@ -256,6 +281,7 @@ func main() {
 
 	if cfg.HTTP.Enabled {
 		httpServer := httpapi.NewServer(store, metaService, httpapi.Options{
+			Adapters:           adapterRegistry,
 			Address:            cfg.HTTP.Address,
 			TokenEnv:           cfg.HTTP.TokenEnv,
 			CORSAllowedOrigins: cfg.HTTP.CORSAllowedOrigins,
@@ -280,6 +306,12 @@ func main() {
 	if err := metaHandler.RegisterHandlers(nc); err != nil {
 		log.Fatalf("Failed to register meta handlers: %v", err)
 	}
+	if adapterHandler != nil {
+		if err := adapterHandler.RegisterHandlers(nc); err != nil {
+			log.Fatalf("Failed to register adapter handlers: %v", err)
+		}
+	}
+
 	if err := alarmHandler.RegisterHandlers(nc); err != nil {
 		log.Fatalf("Failed to register alarm handlers: %v", err)
 	}

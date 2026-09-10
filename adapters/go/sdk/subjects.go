@@ -26,3 +26,12 @@ const (
 	SubjectRelationChanged = "platform.meta.relation.changed"
 	SubjectMetaChangedAll  = "platform.meta.*.changed"
 )
+
+// Adapter runtime-status plane (ADR 0008). Mirrors internal/core/events.go.
+const (
+	SubjectAdapterStatusPrefix = "platform.adapter.status."
+	SubjectAdapterHello        = "platform.adapter.hello"
+	SubjectAdapterPingPrefix   = "platform.adapter.ping."
+	SubjectAdapterChanged      = "platform.adapter.changed"
+	SubjectAdapterList         = "platform.adapter.list"
+)

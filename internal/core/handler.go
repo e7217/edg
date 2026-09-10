@@ -29,6 +29,15 @@ var (
 	jetStreamDeadLetters     = expvar.NewInt("edg_core_jetstream_dead_letters")
 	jetStreamDeadLetterFails = expvar.NewInt("edg_core_jetstream_dead_letter_failures")
 	undeclaredAssets         = expvar.NewInt("edg_core_undeclared_assets")
+
+	// Adapter runtime status (ADR 0008).
+	adapterStatusInvalid  = expvar.NewInt("edg_core_adapter_status_invalid")
+	adapterStatusDropped  = expvar.NewInt("edg_core_adapter_status_dropped")
+	adapterStale          = expvar.NewInt("edg_core_adapter_stale_total")
+	adapterProbeRecovered = expvar.NewInt("edg_core_adapter_probe_recovered")
+	adapterProbesSkipped  = expvar.NewInt("edg_core_adapter_probes_skipped")
+	adapterStaleAverted   = expvar.NewInt("edg_core_adapter_stale_averted")
+	adapterForgetAverted  = expvar.NewInt("edg_core_adapter_forget_averted")
 )
 
 // errUndeclaredAsset is the dead-letter reason when an undeclared asset_id is

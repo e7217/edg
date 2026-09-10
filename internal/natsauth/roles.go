@@ -83,6 +83,19 @@ var (
 		"platform.meta.relation.delete",
 	}
 
+	// adapterStatusPublish is the adapter runtime-status plane (ADR 0008).
+	// Adapters report their own liveness here and answer probes on a
+	// dedicated reply namespace, which is why _INBOX publish can stay denied.
+	adapterStatusPublish = []string{
+		"platform.adapter.status.>",
+		"platform.adapter.pong.>",
+	}
+
+	// adapterReadPublish are request/reply subjects any reader may call.
+	adapterReadPublish = []string{
+		"platform.adapter.list",
+	}
+
 	// coreOnlyPublish are subjects only edg-core may ever publish. Publishing
 	// these from outside forges core-accepted data (validated), poisons the
 	// enrichment cache (changed), or fakes analysis output.
@@ -94,6 +107,12 @@ var (
 		"platform.meta.constraints.violation",
 		"platform.alarm.impact.computed",
 		"platform.alarm.grouped",
+		// Adapter transitions are core's verdict, not an adapter's claim: an
+		// adapter must not be able to announce its own availability.
+		"platform.adapter.changed",
+		// hello is core asking the fleet to re-announce. A forged hello would
+		// let anyone trigger a fleet-wide announce storm.
+		"platform.adapter.hello",
 	}
 
 	// destructiveJetStreamDeny are stream/consumer operations that can destroy
@@ -160,8 +179,9 @@ func Permissions(role, stream string) *server.Permissions {
 	case RoleOperator:
 		return &server.Permissions{
 			Publish: &server.SubjectPermission{
-				Allow: concat(telemetryPublish, metaReadPublish, metaWritePublish, []string{"$JS.API.>"}),
-				Deny:  concat(coreOnlyPublish, systemDeny, []string{"_INBOX.>"}),
+				Allow: concat(telemetryPublish, metaReadPublish, metaWritePublish, adapterReadPublish,
+					[]string{"$JS.API.>"}),
+				Deny: concat(coreOnlyPublish, systemDeny, []string{"_INBOX.>"}),
 			},
 			Subscribe: &server.SubjectPermission{
 				Allow: []string{"platform.>", "_INBOX.>"},
@@ -172,7 +192,7 @@ func Permissions(role, stream string) *server.Permissions {
 	case RoleAdapter:
 		return &server.Permissions{
 			Publish: &server.SubjectPermission{
-				Allow: concat(telemetryPublish, metaReadPublish),
+				Allow: concat(telemetryPublish, metaReadPublish, adapterStatusPublish, adapterReadPublish),
 				Deny: concat(metaWritePublish, coreOnlyPublish, destructiveJetStreamDeny, systemDeny,
 					[]string{"$JS.API.>", "_INBOX.>"}),
 			},
@@ -203,7 +223,8 @@ func Permissions(role, stream string) *server.Permissions {
 		// anonymously today — breaking the "no flag day" promise.
 		return &server.Permissions{
 			Publish: &server.SubjectPermission{
-				Allow: concat(telemetryPublish, metaReadPublish, fanoutJetStreamPublish(stream)),
+				Allow: concat(telemetryPublish, metaReadPublish, adapterStatusPublish, adapterReadPublish,
+					fanoutJetStreamPublish(stream)),
 				Deny: concat(metaWritePublish, coreOnlyPublish, destructiveJetStreamDeny, systemDeny,
 					[]string{"_INBOX.>"}),
 			},

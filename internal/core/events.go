@@ -26,6 +26,44 @@ const (
 	EventSchemaVersion = 1
 )
 
+// Adapter runtime-status plane (ADR 0008). A fourth plane alongside data,
+// meta and alarm: platform.meta.* is declarative master data, platform.data.*
+// is telemetry, and this is volatile runtime state.
+//
+// It is deliberately not under platform.data.>, which the PLATFORM_DATA stream
+// captures and persists for 7 days (ADR 0001/0005) — heartbeats would pollute
+// it. Nor under platform.meta.*, whose subscribers use the
+// platform.meta.*.changed wildcard and would drown in heartbeat traffic.
+const (
+	// SubjectAdapterStatusPrefix is completed with the adapter_id, which is
+	// authoritative for identity.
+	SubjectAdapterStatusPrefix = "platform.adapter.status."
+	SubjectAdapterStatusAll    = "platform.adapter.status.>"
+	// SubjectAdapterHello asks every adapter to re-announce. Published by core
+	// at boot so a restart does not leave the registry blind until the next
+	// heartbeat.
+	SubjectAdapterHello = "platform.adapter.hello"
+	// SubjectAdapterPingPrefix is completed with the adapter_id. Core is the
+	// requester; the adapter answers. Turns a missed heartbeat into a
+	// confirmed death instead of a guess.
+	SubjectAdapterPingPrefix = "platform.adapter.ping."
+	// SubjectAdapterChanged carries transitions only, never every heartbeat.
+	SubjectAdapterChanged = "platform.adapter.changed"
+	// SubjectAdapterPongPrefix is the reply subject a probed adapter answers
+	// on, completed with "<adapter_id>.<nonce>".
+	//
+	// The probe deliberately does not use the default _INBOX: ADR 0007 denies
+	// _INBOX publish to the adapter role so that an adapter cannot race core
+	// to answer somebody else's metadata request. Giving adapters a dedicated
+	// reply namespace keeps that property while still letting them answer a
+	// liveness probe.
+	SubjectAdapterPongPrefix = "platform.adapter.pong."
+	SubjectAdapterPongAll    = "platform.adapter.pong.>"
+	// SubjectAdapterList is a request/reply snapshot, mirroring the
+	// platform.meta.asset.list convention.
+	SubjectAdapterList = "platform.adapter.list"
+)
+
 type EventType string
 
 const (
@@ -74,6 +112,13 @@ func (p *EventPublisher) PublishAlarmImpactComputed(impact AlarmImpact) {
 
 func (p *EventPublisher) PublishAlarmGrouped(group AlarmGroup) {
 	p.publishJSON(SubjectAlarmGrouped, group)
+}
+
+// PublishAdapterChanged emits an adapter runtime transition. Best-effort like
+// every other event here: a subscriber that misses one reconciles with
+// platform.adapter.list.
+func (p *EventPublisher) PublishAdapterChanged(ev AdapterChangeEvent) {
+	p.publishJSON(SubjectAdapterChanged, ev)
 }
 
 func (p *EventPublisher) PublishConstraintViolation(violation ConstraintViolation) {

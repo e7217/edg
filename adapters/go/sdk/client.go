@@ -373,3 +373,36 @@ func requestContext(ctx context.Context, d time.Duration) (context.Context, cont
 	}
 	return context.WithTimeout(ctx, d)
 }
+
+// Flush blocks until the server has acknowledged everything published so far.
+//
+// Publishing is buffered and Close drains asynchronously, so a message sent
+// immediately before the process exits can be lost. Callers that must not lose
+// their last message flush explicitly.
+func (c *Client) Flush(timeout time.Duration) error {
+	nc, err := c.conn()
+	if err != nil {
+		return err
+	}
+	if err := nc.FlushTimeout(timeout); err != nil {
+		return fmt.Errorf("%w: flush: %w", ErrPublish, err)
+	}
+	return nil
+}
+
+// PublishRaw publishes pre-encoded bytes to a subject. It exists for the
+// adapter status plane, whose frames the SDK builds itself; ordinary callers
+// should use the typed helpers.
+func (c *Client) PublishRaw(ctx context.Context, subject string, payload []byte) error {
+	nc, err := c.conn()
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("%w: %w", ErrPublish, err)
+	}
+	if err := nc.Publish(subject, payload); err != nil {
+		return fmt.Errorf("%w: %w", ErrPublish, err)
+	}
+	return nil
+}

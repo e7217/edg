@@ -25,9 +25,13 @@ type Options struct {
 	TokenEnv           string
 	CORSAllowedOrigins []string
 	WebUIEnabled       bool
-	Version            string
-	BuildTime          string
-	GitCommit          string
+	// Adapters exposes the runtime-status registry (ADR 0008). Nil disables
+	// the adapter routes entirely, so a deployment with adapters.enabled=false
+	// returns 404 rather than an empty list that reads as "nothing running".
+	Adapters  *core.AdapterRegistry
+	Version   string
+	BuildTime string
+	GitCommit string
 }
 
 type Server struct {
@@ -103,6 +107,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/v1/templates", s.handleTemplates)
 	mux.HandleFunc("GET /api/v1/templates/{name}", s.handleTemplate)
 	mux.HandleFunc("GET /api/v1/constraints", s.handleConstraints)
+	s.registerAdapterRoutes(mux)
 
 	// Write endpoints (Phase 3). All mutations go through MetadataService so
 	// validation, constraint enforcement, and change events match the NATS path.

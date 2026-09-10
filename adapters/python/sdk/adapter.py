@@ -11,6 +11,7 @@ from typing import Any
 from .client import NATSClientWrapper
 from .models import AssetData, TagValue, DeviceState
 from .backoff import BackoffStrategy
+from .status import StatusReporter
 from .exceptions import DeviceError, DeviceConnectionError, DeviceTimeoutError
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,11 @@ class BaseAdapter(ABC):
         nats_max_reconnect_attempts: int = -1,
         nats_reconnect_time_wait: float = 2.0,
         nats_connect_timeout: float = 2.0,
+        adapter_id: str = "",
+        adapter_version: str = "",
+        heartbeat_interval: float = 10.0,
+        disable_status_reporting: bool = False,
+        report_host: bool = False,
     ):
         """
         Args:
@@ -50,6 +56,16 @@ class BaseAdapter(ABC):
             nats_max_reconnect_attempts: NATS max reconnection attempts (default: -1 for unlimited)
             nats_reconnect_time_wait: NATS reconnect wait time in seconds (default: 2.0)
             nats_connect_timeout: NATS connection timeout in seconds (default: 2.0)
+            adapter_id: Runtime-status identity (ADR 0008). Must be a single
+                NATS subject token. Empty falls back to asset_id.
+            adapter_version: Reported in status frames, e.g. "modbus-tcp/1.2.0"
+            heartbeat_interval: Seconds between status frames. Announced in
+                band; core derives its staleness deadline from it, so a slow
+                batch collector is not declared dead for being quiet.
+            disable_status_reporting: Turn runtime-status publishing off
+            report_host: Include hostname and PID in status frames. Off by
+                default: that inventory is more sensitive than the asset list
+                and the plane carries no authorization of its own.
         """
         self.asset_id = asset_id
         self.nats_url = nats_url
@@ -71,6 +87,14 @@ class BaseAdapter(ABC):
         self._max_retries = 5
         self._device_connected = False
 
+        self._adapter_id = adapter_id
+        self._adapter_version = adapter_version
+        self._heartbeat_interval = heartbeat_interval
+        self._disable_status_reporting = disable_status_reporting
+        self._report_host = report_host
+        self._status: StatusReporter | None = None
+        self._stop_task: asyncio.Task[Any] | None = None
+
     @property
     def device_state(self) -> DeviceState:
         """Get current device state (read-only)
@@ -87,6 +111,8 @@ class BaseAdapter(ABC):
             state: New DeviceState
         """
         self._device_state = state
+        if self._status is not None:
+            self._status.set_device_state(state.value)
         logger.debug(f"Device state changed to: {state.value}")
 
     @abstractmethod
@@ -271,7 +297,7 @@ class BaseAdapter(ABC):
         # Setup signal handlers
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, lambda: asyncio.create_task(self.stop()))
+            loop.add_signal_handler(sig, self._on_signal)
 
         logger.info(f"Starting adapter: {self.asset_id}")
         print("=" * 40)
@@ -283,17 +309,51 @@ class BaseAdapter(ABC):
         # Connect to NATS
         await self._client.connect()
 
+        # Set before anything that can fail below: stop() is guarded by this
+        # flag, so leaving it False while the reporter is already heartbeating
+        # would let a failed startup keep reporting "running" forever.
+        self._running = True
+
+        # Runtime status reporting (ADR 0008). On by default: an adapter nobody
+        # can see is the problem this plane exists to solve.
+        if not self._disable_status_reporting:
+            self._status = StatusReporter(
+                client=self._client,
+                asset_id=self.asset_id,
+                adapter_id=self._adapter_id,
+                adapter_version=self._adapter_version,
+                heartbeat_interval=self._heartbeat_interval,
+                report_host=self._report_host,
+            )
+            await self._status.start()
+
         # Start callback
         await self.on_start()
 
         # Start collection loop
-        self._running = True
         self._task = asyncio.create_task(self._collect_loop())
 
         try:
             await self._task
         except asyncio.CancelledError:
             pass
+
+        # A signal handler runs stop() as its own task. Awaiting it here keeps
+        # the event loop alive until the goodbye frame has been flushed;
+        # otherwise start() returns, asyncio.run closes the loop, and core
+        # never learns the adapter shut down cleanly.
+        if self._stop_task is not None:
+            try:
+                await self._stop_task
+            except asyncio.CancelledError:
+                pass
+
+    def _on_signal(self) -> None:
+        """SIGINT/SIGTERM handler. Keeps a reference to the stop task so start()
+        can wait for it; a fire-and-forget task would be abandoned when the loop
+        closes."""
+        if self._stop_task is None:
+            self._stop_task = asyncio.create_task(self.stop())
 
     async def stop(self) -> None:
         """Stop adapter"""
@@ -323,6 +383,12 @@ class BaseAdapter(ABC):
         # Stop callback
         await self.on_stop()
 
+        # Goodbye frame before the connection closes, so core can tell a clean
+        # shutdown from silence.
+        if self._status is not None:
+            await self._status.stop()
+            self._status = None
+
         # Disconnect NATS
         await self._client.disconnect()
 
@@ -347,14 +413,20 @@ class BaseAdapter(ABC):
                         metadata=self.metadata,
                     )
                     await self._client.publish_asset_data(data)
+                    if self._status is not None:
+                        self._status.inc_published()
                     logger.debug(f"Published: {len(values)} tags")
 
             except asyncio.CancelledError:
                 raise
             except (DeviceConnectionError, DeviceTimeoutError) as e:
+                if self._status is not None:
+                    self._status.inc_collect_error(e)
                 # Handle device errors with retry
                 await self._handle_device_error(e)
             except Exception as e:
+                if self._status is not None:
+                    self._status.inc_collect_error(e)
                 # Non-device errors are logged but not retried
                 logger.error(f"Collection error: {e}")
 

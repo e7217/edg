@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "adapter_id": "modbus-line3",
+  "instance_id": "0f2b9c1e6a414b2e",
+  "seq": 412,
+  "phase": "heartbeat",
+  "run_state": "running",
+  "device_state": "connected",
+  "heartbeat_interval_s": 10,
+  "uptime_s": 4120,
+  "started_at": "2026-09-09T01:00:00Z",
+  "sent_at": "2026-09-09T02:08:40Z",
+  "sdk": "go/0.6.0",
+  "adapter_version": "modbus-tcp/1.2.0",
+  "capabilities": ["ping"],
+  "config_version": 0,
+  "assets": [
+    {
+      "asset_id": "press-01",
+      "device_state": "connected",
+      "published_total": 4098,
+      "collect_errors_total": 3,
+      "last_error": "read timeout",
+      "last_error_at": "2026-09-09T02:05:11Z"
+    }
+  ],
+  "device_counts": { "connected": 1 },
+  "counters": {
+    "published_total": 4098,
+    "collect_errors_total": 3,
+    "device_errors_total": 2,
+    "device_reconnects_total": 1,
+    "nats_reconnects_total": 0,
+    "consecutive_collect_errors": 0
+  }
+}
