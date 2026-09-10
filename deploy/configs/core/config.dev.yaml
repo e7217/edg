@@ -76,6 +76,12 @@ logging:
   level: debug
   format: text
 
+# Prometheus exposition (ADR 0009). Also served on the monitoring port at
+# http://127.0.0.1:8222/metrics.
+metrics:
+  enabled: true
+  address: 127.0.0.1:9464
+
 # Adapter runtime status (ADR 0008). Runtime state is in memory only; core
 # re-learns it after a restart by broadcasting platform.adapter.hello.
 adapters:

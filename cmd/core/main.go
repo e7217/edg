@@ -143,10 +143,19 @@ func main() {
 		log.Fatal("NATS server not ready")
 	}
 
+	// 2.1. Prometheus exposition (ADR 0009). Mounted before the banner so the
+	// URLs it prints are already live.
+	metricsCtx, stopMetrics := context.WithCancel(context.Background())
+	defer stopMetrics()
+	metricsURLs := setUpMetrics(metricsCtx, ns, cfg)
+
 	log.Println("=================================")
 	log.Println("  EDG Platform Core Started")
 	log.Printf("  NATS: nats://%s:%d", cfg.NATS.Host, cfg.NATS.Port)
 	log.Printf("  Monitor: http://%s:%d", cfg.NATS.HTTPHost, cfg.NATS.HTTPPort)
+	for _, u := range metricsURLs {
+		log.Printf("  Metrics: %s", u)
+	}
 	logAuthBanner(cfg, credsPath, credsSource)
 	log.Println("=================================")
 
@@ -324,6 +333,7 @@ func main() {
 	<-quit
 
 	log.Println("[Core] Shutting down...")
+	stopMetrics()
 	stopServices()
 	if sink != nil {
 		sink.Stop()

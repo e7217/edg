@@ -54,6 +54,20 @@ type CoreConfig struct {
 	HTTP               HTTPConfig        `yaml:"http"`
 	Sink               SinkConfig        `yaml:"sink"`
 	Adapters           AdaptersConfig    `yaml:"adapters"`
+	Metrics            MetricsConfig     `yaml:"metrics"`
+}
+
+// MetricsConfig configures the Prometheus exposition surface (ADR 0009).
+type MetricsConfig struct {
+	// Enabled registers the collectors and mounts /metrics. Defaults to true.
+	Enabled bool `yaml:"enabled"`
+	// Address is a dedicated listener for /metrics, e.g. "0.0.0.0:9464".
+	//
+	// Empty means no dedicated listener, in which case /metrics is reachable
+	// only on the NATS monitoring port -- which binds to loopback by default
+	// (ADR 0007) and is therefore unreachable from a scraper running in
+	// another container. Container deployments must set this.
+	Address string `yaml:"address"`
 }
 
 // AdaptersConfig configures the adapter runtime-status registry (ADR 0008).
@@ -223,6 +237,13 @@ func DefaultCoreConfig() CoreConfig {
 			Enabled:  false,
 			Address:  "127.0.0.1:8080",
 			TokenEnv: "EDG_HTTP_TOKEN",
+		},
+		Metrics: MetricsConfig{
+			Enabled: true,
+			// No dedicated listener by default: a single-binary operator
+			// reaches /metrics on the monitoring port, and opening a second
+			// port that nobody asked for is a cost with no matching benefit.
+			Address: "",
 		},
 		Adapters: AdaptersConfig{
 			Enabled:             true,
@@ -408,6 +429,11 @@ func (c CoreConfig) validate() error {
 			return fmt.Errorf("invalid adapters.max_concurrent_probes: %d (must be > 0)", c.Adapters.MaxConcurrentProbes)
 		}
 	}
+	if c.Metrics.Enabled && c.Metrics.Address != "" {
+		if _, _, err := net.SplitHostPort(c.Metrics.Address); err != nil {
+			return fmt.Errorf("invalid metrics.address: %q (want host:port)", c.Metrics.Address)
+		}
+	}
 	if c.Sink.Enabled {
 		if c.Sink.URL == "" {
 			return fmt.Errorf("sink.url is required when sink.enabled is true")
@@ -547,6 +573,24 @@ func (c *SinkConfig) UnmarshalYAML(value *yaml.Node) error {
 			return fmt.Errorf("invalid sink.request_timeout: %w", err)
 		}
 		c.RequestTimeout = duration
+	}
+	return nil
+}
+
+// UnmarshalYAML mirrors SinkConfig's: enabled defaults to true when the key is
+// omitted, which the "if zero then default" idiom in applyDefaults cannot
+// express for a bool.
+func (c *MetricsConfig) UnmarshalYAML(value *yaml.Node) error {
+	var raw struct {
+		Enabled *bool  `yaml:"enabled"`
+		Address string `yaml:"address"`
+	}
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	*c = MetricsConfig{
+		Enabled: raw.Enabled == nil || *raw.Enabled,
+		Address: raw.Address,
 	}
 	return nil
 }
