@@ -96,10 +96,8 @@ jobs:
           go build -o /tmp/edg-core ./cmd/core
           root=$(mktemp -d)
           mkdir -p "$root/data/jetstream" "$root/templates"
-          sed -e "s#/var/lib/edg/data/jetstream#$root/data/jetstream#" \
-              -e "s#/var/lib/edg/metadata.db#$root/metadata.db#" \
-              -e "s#/var/lib/edg/data#$root/data#" \
-              -e "s#/etc/edg/templates#$root/templates#" \
+          sed -e "s#/opt/edg/data#$root/data#g" \
+              -e "s#/opt/edg/templates#$root/templates#" \
               -e "s#^  address: 0.0.0.0:9464#  address: 127.0.0.1:19464#" \
               deploy/configs/core/config.prod.yaml > "$root/config.yaml"
 
@@ -139,6 +137,19 @@ jobs:
             echo "$external"
             exit 1
           fi
+
+  compose-smoke:
+    name: Compose stack
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The bundled stack was unable to start from a clean volume for months
+      # (#114) because nothing ever ran it. Unit tests cannot see that class of
+      # defect; only booting the shipped compose file can.
+      - name: Boot the shipped compose stack
+        run: ./scripts/compose-smoke.sh ci
 
   go-sdk:
     # adapters/go/sdk is a separate module and the repository has no go.work,

@@ -115,7 +115,7 @@ is empty, distribute credentials and set `nats.auth.mode: strict`.
 
 ```bash
 # per-role secret
-jq -r .adapter /var/lib/edg/data/nats-credentials.json
+jq -r .adapter /opt/edg/data/nats-credentials.json
 # clients connect with credentials in the URL
 nats://adapter:<secret>@edg-core:4222
 ```

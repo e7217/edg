@@ -59,6 +59,27 @@ If you are not using systemd, you can start components manually:
 INSTALL_DIR=/custom/path ./install.sh
 ```
 
+### Where Data Lives
+
+Everything EDG writes sits under one install root, `/opt/edg` by default:
+
+| Path | Contents |
+| --- | --- |
+| `/opt/edg/bin` | `edg-core`, `victoria-metrics-prod` |
+| `/opt/edg/configs` | the shipped `config.{dev,staging,prod}.yaml` |
+| `/opt/edg/templates` | template seed directory (`templates.dir`) |
+| `/opt/edg/data` | `metadata.db`, `jetstream/`, `nats-credentials.json` (`storage.data_dir`) |
+
+The Docker image builds the same layout, and `deploy/docker/compose.yml` mounts
+its `edg-data` volume at `/opt/edg/data`. **Back that one directory up and you
+have the whole gateway**: master data, the JetStream backlog and the NATS role
+credentials. Nothing of value is written outside it.
+
+To check the stack after a change to the compose file or the image, run
+`scripts/compose-smoke.sh` — it boots the stack, waits for the healthcheck,
+verifies both scrape targets and asserts that state survives a container
+recreate. CI runs the same script.
+
 ## Configuration
 
 ### EDG Core
@@ -140,7 +161,7 @@ nats://adapter:<secret>@localhost:4222
 Read a role's secret with:
 
 ```bash
-jq -r .adapter /var/lib/edg/data/nats-credentials.json
+jq -r .adapter /opt/edg/data/nats-credentials.json
 ```
 
 To keep secrets off disk entirely, set all three of
