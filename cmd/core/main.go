@@ -273,6 +273,11 @@ func main() {
 			ProbeOnMiss: cfg.Adapters.ProbeOnMiss,
 		})
 		adapterHandler.SetRegistry(adapterRegistry)
+		if cfg.Metrics.Enabled {
+			core.RegisterAdapterMetrics(metrics.Default, adapterRegistry, core.AdapterMetricsOptions{
+				MaxTracked: cfg.Adapters.MetricsMaxTracked,
+			})
+		}
 		adapterRegistry.Start()
 		defer adapterRegistry.Stop()
 		defer adapterHandler.Stop()

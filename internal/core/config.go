@@ -97,6 +97,10 @@ type AdaptersConfig struct {
 	// MaxConcurrentProbes stops a fleet-wide partition from becoming a probe
 	// storm.
 	MaxConcurrentProbes int `yaml:"max_concurrent_probes"`
+	// MetricsMaxTracked caps per-adapter /metrics series. Adapters past the
+	// cap fold into adapter_id="__overflow__"; a negative value exposes only
+	// the aggregates. Zero means DefaultAdapterMetricsMaxTracked.
+	MetricsMaxTracked int `yaml:"metrics_max_tracked"`
 }
 
 type NATSConfig struct {
@@ -263,6 +267,7 @@ func DefaultCoreConfig() CoreConfig {
 			ProbeOnMiss:         true,
 			ProbeTimeout:        2 * time.Second,
 			MaxConcurrentProbes: DefaultAdapterMaxProbes,
+			MetricsMaxTracked:   DefaultAdapterMetricsMaxTracked,
 		},
 		Sink: SinkConfig{
 			Enabled:        true,
@@ -707,6 +712,9 @@ func (c *AdaptersConfig) applyDefaults(defaults AdaptersConfig) {
 	if c.MaxConcurrentProbes == 0 {
 		c.MaxConcurrentProbes = defaults.MaxConcurrentProbes
 	}
+	if c.MetricsMaxTracked == 0 {
+		c.MetricsMaxTracked = defaults.MetricsMaxTracked
+	}
 }
 
 // UnmarshalYAML mirrors SinkConfig's: durations arrive as strings, and the
@@ -721,12 +729,16 @@ func (c *AdaptersConfig) UnmarshalYAML(value *yaml.Node) error {
 		ProbeOnMiss         *bool  `yaml:"probe_on_miss"`
 		ProbeTimeout        string `yaml:"probe_timeout"`
 		MaxConcurrentProbes int    `yaml:"max_concurrent_probes"`
+		MetricsMaxTracked   int    `yaml:"metrics_max_tracked"`
 	}
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
 
-	*c = AdaptersConfig{MaxConcurrentProbes: raw.MaxConcurrentProbes}
+	*c = AdaptersConfig{
+		MaxConcurrentProbes: raw.MaxConcurrentProbes,
+		MetricsMaxTracked:   raw.MetricsMaxTracked,
+	}
 	c.Enabled = raw.Enabled == nil || *raw.Enabled
 	c.ProbeOnMiss = raw.ProbeOnMiss == nil || *raw.ProbeOnMiss
 
