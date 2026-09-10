@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"expvar"
 	"fmt"
 	"io"
 	"log"
@@ -18,14 +17,35 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/e7217/edg/internal/metrics"
 )
 
-// VM sink expvar counters, consistent with the edg_core_* naming used elsewhere.
+// VM sink counters. The expvar names are the historical ones ADR 0001 and the
+// user guide document; the Desc alongside each is what /metrics serves.
 var (
-	sinkLinesWritten   = expvar.NewInt("edg_core_sink_lines_written")
-	sinkBatchesWritten = expvar.NewInt("edg_core_sink_batches_written")
-	sinkWriteFailures  = expvar.NewInt("edg_core_sink_write_failures")
-	sinkDecodeFailures = expvar.NewInt("edg_core_sink_decode_failures")
+	// "lines" here means InfluxDB line-protocol lines, i.e. individual time
+	// series points -- not messages. appendAssetDataLines skips every value
+	// without a numeric reading, so this is well below the message count.
+	sinkLinesWritten = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_sink_lines_written_total",
+		Help: "Line-protocol lines (time series points, not messages) accepted by VictoriaMetrics.",
+	}, "edg_core_sink_lines_written")
+
+	sinkBatchesWritten = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_sink_batches_written_total",
+		Help: "Batches successfully written to VictoriaMetrics and then acked on JetStream.",
+	}, "edg_core_sink_batches_written")
+
+	sinkWriteFailures = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_sink_write_failures_total",
+		Help: "Failed writes to VictoriaMetrics. The batch is nakked, so a sustained rate means redelivery pressure.",
+	}, "edg_core_sink_write_failures")
+
+	sinkDecodeFailures = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_sink_decode_failures_total",
+		Help: "Messages in a batch that could not be decoded as asset data. They are skipped, not retried.",
+	}, "edg_core_sink_decode_failures")
 )
 
 // VMSink consumes validated asset data from JetStream via a durable pull

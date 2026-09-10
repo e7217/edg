@@ -3,12 +3,13 @@ package core
 import (
 	"encoding/json"
 	"errors"
-	"expvar"
 	"log"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
+
+	"github.com/e7217/edg/internal/metrics"
 )
 
 // DataHandler handles NATS messages for asset data
@@ -24,20 +25,65 @@ type DataHandler struct {
 	enricher           *Enricher
 }
 
+// These counters are stored in *expvar.Int and published under their historical
+// expvar names, so /debug/vars is byte-for-byte what it was; the Desc alongside
+// each one is what /metrics serves. See ADR 0009.
 var (
-	jetStreamPublishFailures = expvar.NewInt("edg_core_jetstream_publish_failures")
-	jetStreamDeadLetters     = expvar.NewInt("edg_core_jetstream_dead_letters")
-	jetStreamDeadLetterFails = expvar.NewInt("edg_core_jetstream_dead_letter_failures")
-	undeclaredAssets         = expvar.NewInt("edg_core_undeclared_assets")
+	jetStreamPublishFailures = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_jetstream_publish_failures_total",
+		Help: "Validated messages that could not be published to JetStream. Each one is also dead-lettered.",
+	}, "edg_core_jetstream_publish_failures")
+
+	jetStreamDeadLetters = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_jetstream_dead_letters_total",
+		Help: "Messages written to the dead-letter subject.",
+	}, "edg_core_jetstream_dead_letters")
+
+	jetStreamDeadLetterFails = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_jetstream_dead_letter_failures_total",
+		Help: "Dead-letter attempts that themselves failed. These messages are lost.",
+	}, "edg_core_jetstream_dead_letter_failures")
+
+	undeclaredAssets = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_undeclared_assets_total",
+		Help: "Messages whose asset_id has no master-data record, counted before unknown_asset_policy is applied.",
+	}, "edg_core_undeclared_assets")
 
 	// Adapter runtime status (ADR 0008).
-	adapterStatusInvalid  = expvar.NewInt("edg_core_adapter_status_invalid")
-	adapterStatusDropped  = expvar.NewInt("edg_core_adapter_status_dropped")
-	adapterStale          = expvar.NewInt("edg_core_adapter_stale_total")
-	adapterProbeRecovered = expvar.NewInt("edg_core_adapter_probe_recovered")
-	adapterProbesSkipped  = expvar.NewInt("edg_core_adapter_probes_skipped")
-	adapterStaleAverted   = expvar.NewInt("edg_core_adapter_stale_averted")
-	adapterForgetAverted  = expvar.NewInt("edg_core_adapter_forget_averted")
+	adapterStatusInvalid = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_adapter_status_invalid_total",
+		Help: "Adapter status frames rejected as malformed, oversized, or carrying an id that does not match the subject.",
+	}, "edg_core_adapter_status_invalid")
+
+	adapterStatusDropped = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_adapter_status_dropped_total",
+		Help: "Adapter status frames dropped by NATS because the subscription's pending limit was reached.",
+	}, "edg_core_adapter_status_dropped")
+
+	adapterStale = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_adapter_stale_total",
+		Help: "Transitions of an adapter into the stale availability state.",
+	}, "edg_core_adapter_stale_total")
+
+	adapterProbeRecovered = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_adapter_probe_recovered_total",
+		Help: "Adapters that answered a liveness probe and so were kept out of the stale state.",
+	}, "edg_core_adapter_probe_recovered")
+
+	adapterProbesSkipped = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_adapter_probes_skipped_total",
+		Help: "Liveness probes not sent because the concurrency limit was already reached; those adapters go stale without being probed.",
+	}, "edg_core_adapter_probes_skipped")
+
+	adapterStaleAverted = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_adapter_stale_averted_total",
+		Help: "Stale markings abandoned because a fresh status frame arrived while the probe was in flight.",
+	}, "edg_core_adapter_stale_averted")
+
+	adapterForgetAverted = metrics.Default.NewCounterLegacy(metrics.Desc{
+		Name: "edg_core_adapter_forget_averted_total",
+		Help: "Registry evictions abandoned because the adapter reported in again before the forget deadline.",
+	}, "edg_core_adapter_forget_averted")
 )
 
 // errUndeclaredAsset is the dead-letter reason when an undeclared asset_id is

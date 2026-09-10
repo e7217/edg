@@ -1,0 +1,32 @@
+# HELP edg_core_metrics_label_rejected_total Label values rejected because they are not in the metric's declared value set.
+# TYPE edg_core_metrics_label_rejected_total counter
+edg_core_metrics_label_rejected_total{metric="edg_test_labelled_total"} 1
+# HELP edg_core_metrics_series Time series currently exposed by this process.
+# TYPE edg_core_metrics_series gauge
+edg_core_metrics_series 16
+# HELP edg_test_clock_offset_seconds A value that can go negative.
+# TYPE edg_test_clock_offset_seconds gauge
+edg_test_clock_offset_seconds -3
+# HELP edg_test_frames_total A counter whose help has a backslash \\ and a "quote" and a\nnewline.
+# TYPE edg_test_frames_total counter
+edg_test_frames_total 7
+# HELP edg_test_labelled_total A labelled counter over a closed value set.
+# TYPE edg_test_labelled_total counter
+edg_test_labelled_total{reason="http_status"} 5
+edg_test_labelled_total{reason="transport"} 2
+edg_test_labelled_total{reason="other"} 1
+# HELP edg_test_load_factor A value read at scrape time.
+# TYPE edg_test_load_factor gauge
+edg_test_load_factor 1.5
+# HELP edg_test_seconds A latency histogram. Buckets are provisional.
+# TYPE edg_test_seconds histogram
+edg_test_seconds_bucket{le="0.0005"} 1
+edg_test_seconds_bucket{le="0.01"} 2
+edg_test_seconds_bucket{le="1"} 3
+edg_test_seconds_bucket{le="+Inf"} 4
+edg_test_seconds_sum 30.5021
+edg_test_seconds_count 4
+# HELP edg_test_state A state set.
+# TYPE edg_test_state gauge
+edg_test_state{state="running"} 1
+edg_test_state{state="stopped"} 0
