@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/e7217/edg/compare/v0.1.0...v0.1.1) (2026-09-11)
+
+
+### Features
+
+* **core:** let an operator choose an asset id ([#129](https://github.com/e7217/edg/issues/129)) ([#132](https://github.com/e7217/edg/issues/132)) ([472ece4](https://github.com/e7217/edg/commit/472ece441237407a84ac89992bdcbabd3e8ffe40))
+* **core:** point provisioning as master data (P2 phase 1) ([#131](https://github.com/e7217/edg/issues/131)) ([29c0ce5](https://github.com/e7217/edg/commit/29c0ce5dbd59087e06d07145fab692a47d9ff095))
+
+
+### Bug Fixes
+
+* **ci:** attach release assets to the tag, not to refs/heads/main ([#126](https://github.com/e7217/edg/issues/126)) ([20b21d1](https://github.com/e7217/edg/commit/20b21d1876d3785a6e99f4a2f4851b83e59f3175)), closes [#117](https://github.com/e7217/edg/issues/117)
+* **ci:** build release artifacts from release-please, not a tag trigger ([#124](https://github.com/e7217/edg/issues/124)) ([e34ce3d](https://github.com/e7217/edg/commit/e34ce3daf37957dbc7f963efd1427e90bf7bfa88))
+* **ci:** upload release assets with gh, which infers nothing ([#127](https://github.com/e7217/edg/issues/127)) ([217d73d](https://github.com/e7217/edg/commit/217d73d3defb394c8eb47a04270fb7b8f4145a42)), closes [#117](https://github.com/e7217/edg/issues/117)
+* **core:** delete the PoC buffer that retained every message ever received ([#128](https://github.com/e7217/edg/issues/128)) ([eb9d74f](https://github.com/e7217/edg/commit/eb9d74f310a93b3364870a7e8405de3f10a9bd90)), closes [#115](https://github.com/e7217/edg/issues/115)
+
 ## 0.1.0 (2026-09-10)
 
 
