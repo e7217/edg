@@ -1,10 +1,16 @@
 package core
 
 import (
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func newPointsTestService(t *testing.T) (*MetadataService, *Store) {
@@ -401,4 +407,151 @@ func TestPointListWithNoPointsIsVisible(t *testing.T) {
 	require.Len(t, lists, 1)
 	assert.Equal(t, "pump-a", lists[0].AssetID)
 	assert.Empty(t, lists[0].Points)
+}
+
+// A point with no `enabled` key must be enabled, matching the column's
+// DEFAULT 1. The migration this feature exists for is converting a
+// mapping.yaml, which has no enabled concept on any register -- decoding an
+// absent key as false would store the whole plant's inventory disabled and
+// report success.
+func TestAbsentEnabledMeansEnabled(t *testing.T) {
+	t.Run("yaml", func(t *testing.T) {
+		var p Point
+		require.NoError(t, yaml.Unmarshal([]byte(
+			"name: temperature\nvalue_type: NUMBER\naddress: \"0\"\n"), &p))
+		assert.True(t, p.Enabled, "an absent enabled key means enabled")
+	})
+	t.Run("yaml explicit false", func(t *testing.T) {
+		var p Point
+		require.NoError(t, yaml.Unmarshal([]byte(
+			"name: t\nvalue_type: NUMBER\naddress: \"0\"\nenabled: false\n"), &p))
+		assert.False(t, p.Enabled, "an explicit false is still respected")
+	})
+	t.Run("json", func(t *testing.T) {
+		var p Point
+		require.NoError(t, json.Unmarshal(
+			[]byte(`{"name":"t","value_type":"NUMBER","address":"0"}`), &p))
+		assert.True(t, p.Enabled, "the API door behaves like the file door")
+	})
+	t.Run("json explicit false", func(t *testing.T) {
+		var p Point
+		require.NoError(t, json.Unmarshal(
+			[]byte(`{"name":"t","value_type":"NUMBER","address":"0","enabled":false}`), &p))
+		assert.False(t, p.Enabled)
+	})
+}
+
+// Protocol settings pasted from a mapping.yaml sit at the top level of a
+// register rather than under encoding:. Discarding them silently yields a point
+// with no decode rules and an import that reports success, so they are an error.
+func TestUnknownPointKeyIsRejected(t *testing.T) {
+	var p Point
+	err := yaml.Unmarshal([]byte(`
+name: temperature
+value_type: NUMBER
+address: "0"
+function: holding
+type: int16
+scale: 0.1
+`), &p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `unknown field "function"`)
+	assert.Contains(t, err.Error(), "belong under encoding:")
+}
+
+// A GET response must be re-PUTtable. omitempty does not omit a zero
+// time.Time, so a client editing a fetched list always sends created_at and
+// updated_at back; rejecting that would be hostile.
+func TestPointJSONRoundTripAcceptsServerAssignedFields(t *testing.T) {
+	svc, _ := newPointsTestService(t)
+	_, err := svc.UpsertPointList(UpsertPointListRequest{
+		AssetID: "pump-a", Protocol: "modbus-tcp",
+		Points: []Point{modbusPoint("temperature", "0")},
+	})
+	require.NoError(t, err)
+
+	pl, err := svc.GetPointList("pump-a")
+	require.NoError(t, err)
+	require.False(t, pl.Points[0].CreatedAt.IsZero())
+
+	body, err := json.Marshal(pl.Points[0])
+	require.NoError(t, err)
+	var back Point
+	require.NoError(t, json.Unmarshal(body, &back), "a fetched point must decode again")
+	assert.True(t, back.Enabled)
+	assert.Equal(t, "0", back.Address)
+}
+
+// The export is what -export-points writes to disk. A write landing between the
+// header read and the per-asset point reads used to be exported as that write's
+// points under the previous write's protocol -- a file that re-imports cleanly.
+func TestListPointListsIsASnapshotUnderConcurrentWrites(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "m.db"))
+	require.NoError(t, err)
+	defer store.Close()
+
+	const assets = 40
+	for i := 0; i < assets; i++ {
+		id := fmt.Sprintf("asset-%03d", i)
+		require.NoError(t, store.CreateAsset(&Asset{ID: id, Name: id, TemplateName: "t"}))
+		_, err := store.UpsertPointList(&PointList{
+			AssetID: id, Protocol: "modbus-tcp",
+			Points: []Point{{Name: "m1", ValueType: ValueTypeNumber, Address: "0", Enabled: true}},
+		})
+		require.NoError(t, err)
+	}
+
+	// One writer flips a victim asset between two internally consistent shapes.
+	// Any export pairing one shape's protocol with the other's addresses is torn.
+	const victim = "asset-000"
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		modbus := &PointList{AssetID: victim, Protocol: "modbus-tcp",
+			Points: []Point{{Name: "m1", ValueType: ValueTypeNumber, Address: "0", Enabled: true}}}
+		opcua := &PointList{AssetID: victim, Protocol: "opcua",
+			Points: []Point{{Name: "o1", ValueType: ValueTypeNumber, Address: "ns=2;s=T", Enabled: true}}}
+		// Paced rather than a tight loop. An operator-driven write rate is what
+		// this has to be correct under; hammering a single SQLite handle as
+		// fast as possible measures lock contention, not coherence.
+		for {
+			select {
+			case <-stop:
+				return
+			case <-time.After(time.Millisecond):
+			}
+			if _, err := store.UpsertPointList(modbus); err != nil {
+				t.Errorf("write failed: %v", err)
+				return
+			}
+			if _, err := store.UpsertPointList(opcua); err != nil {
+				t.Errorf("write failed: %v", err)
+				return
+			}
+		}
+	}()
+
+	torn := 0
+	for i := 0; i < 150; i++ {
+		lists, err := store.ListPointLists()
+		require.NoError(t, err)
+		for _, pl := range lists {
+			if pl.AssetID != victim || len(pl.Points) == 0 {
+				continue
+			}
+			coherent := (pl.Protocol == "modbus-tcp" && pl.Points[0].Name == "m1") ||
+				(pl.Protocol == "opcua" && pl.Points[0].Name == "o1")
+			if !coherent {
+				torn++
+				t.Logf("torn: protocol=%s point=%s address=%s version=%d",
+					pl.Protocol, pl.Points[0].Name, pl.Points[0].Address, pl.Version)
+			}
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	assert.Zero(t, torn, "%d of 150 exports paired one write's protocol with another's points", torn)
 }

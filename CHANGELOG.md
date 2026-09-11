@@ -113,6 +113,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reads that span more than one statement now run in a transaction.
+  `-export-points` read every point list's header row and only then queried each
+  asset's points, so a write landing mid-loop was exported as that write's
+  points under the previous write's protocol — a file that re-imported cleanly
+  and stored the combination as master data. Measured before the fix: 6 of 44
+  exports concurrent with a single API write. `_busy_timeout` goes with it,
+  because under the default rollback journal a reader's lock would otherwise
+  fail a concurrent writer outright rather than making it wait.
+
 - Foreign keys were enforced on only one pooled connection. `PRAGMA
   foreign_keys = ON` was executed against the `*sql.DB`, which applies to
   whichever connection happens to serve it, and the pool is unbounded for a

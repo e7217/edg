@@ -66,11 +66,17 @@ func NewStoreWithMigrations(dbPath string, autoMigrate bool) (*Store, error) {
 // Measured before this change: two of eight concurrent reads of the pragma
 // returned 0.
 func withForeignKeys(dbPath string) string {
-	const param = "_foreign_keys=on"
+	// _busy_timeout is here for the same reason. Reads that span more than one
+	// statement -- a point list and its points, a template and its resources --
+	// run in a transaction so a concurrent write cannot be observed half
+	// applied. Under the default rollback journal a reader's shared lock blocks
+	// a writer, so without a timeout the loser gets `database is locked`
+	// immediately instead of waiting for a transaction that takes milliseconds.
+	params := "_foreign_keys=on&_busy_timeout=5000"
 	if strings.Contains(dbPath, "?") {
-		return dbPath + "&" + param
+		return dbPath + "&" + params
 	}
-	return dbPath + "?" + param
+	return dbPath + "?" + params
 }
 
 func verifyStoreSchema(db *sql.DB) error {

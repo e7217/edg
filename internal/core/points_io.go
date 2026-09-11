@@ -1,7 +1,9 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -66,8 +68,13 @@ func readPointFile(path, fileAssetID string) (*UpsertPointListRequest, error) {
 	if err != nil {
 		return nil, err
 	}
+	// KnownFields so a misspelled or misplaced top-level key is an error rather
+	// than silently discarded. `poll_interval` instead of `poll_interval_ms`
+	// would otherwise leave the adapter's default in place with no complaint.
 	var pl PointList
-	if err := yaml.Unmarshal(data, &pl); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&pl); err != nil && err != io.EOF {
 		return nil, err
 	}
 	if pl.AssetID != "" && pl.AssetID != fileAssetID {

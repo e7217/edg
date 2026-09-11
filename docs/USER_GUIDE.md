@@ -416,7 +416,8 @@ points:
       function: holding
       type: int16
       scale: 0.1
-    enabled: true           # false keeps the declaration without polling it
+    enabled: true           # omit it and the point is enabled; false keeps the
+                            # declaration on record without polling it
 ```
 
 ### Import and export
@@ -432,6 +433,15 @@ edg-core -export-points ./points
 Import reports **every** rejected file rather than stopping at the first, so one
 pass over a plant gives you the whole list of problems. Files that fail are
 skipped; the rest are applied.
+
+**Unknown keys are an error, not ignored.** Pasting a register straight out of an
+adapter's `mapping.yaml` puts `function`, `type` and `scale` at the top level of
+the point instead of under `encoding:`, and silently discarding them would store
+a point with no decode rules while reporting success:
+
+```
+pump-a.yaml: line 6: unknown field "function" (protocol-specific settings belong under encoding:)
+```
 
 The file name is the asset id. A file whose `asset_id:` disagrees with its name
 is rejected rather than resolved in either direction — silently preferring one
