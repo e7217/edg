@@ -395,6 +395,112 @@ The update API replaces the asset's mutable metadata fields. Send the complete d
 }
 ```
 
+## Point Provisioning
+
+A *point* is one declared reading on an asset: which address on the field device
+it lives at, what the tag is called on the data plane, and how to decode it. EDG
+holds the plant's whole tag inventory as master data, so it is queryable,
+diffable and backed up in one place instead of living in a file on each adapter
+box.
+
+```yaml
+# pump-a.yaml — one file per asset
+protocol: modbus-tcp        # opaque to the core; names the adapter that reads it
+poll_interval_ms: 1000      # omit to leave the adapter's own default alone
+points:
+  - name: temperature       # matches TagValue.name on the data plane
+    value_type: NUMBER      # NUMBER | TEXT | FLAG
+    unit: "°C"
+    address: "0"            # opaque: a Modbus register, an OPC-UA node id
+    encoding:               # protocol-specific, arbitrary JSON
+      function: holding
+      type: int16
+      scale: 0.1
+    enabled: true           # omit it and the point is enabled; false keeps the
+                            # declaration on record without polling it
+```
+
+### Import and export
+
+```bash
+# Bulk import a directory of <asset-id>.yaml
+edg-core -import-points ./points
+
+# Write every declared list back out
+edg-core -export-points ./points
+```
+
+Import reports **every** rejected file rather than stopping at the first, so one
+pass over a plant gives you the whole list of problems. Files that fail are
+skipped; the rest are applied.
+
+**Unknown keys are an error, not ignored.** Pasting a register straight out of an
+adapter's `mapping.yaml` puts `function`, `type` and `scale` at the top level of
+the point instead of under `encoding:`, and silently discarding them would store
+a point with no decode rules while reporting success:
+
+```
+pump-a.yaml: line 6: unknown field "function" (protocol-specific settings belong under encoding:)
+```
+
+The file name is the asset id. A file whose `asset_id:` disagrees with its name
+is rejected rather than resolved in either direction — silently preferring one
+is how a whole directory ends up on a single asset.
+
+**Asset ids are server-assigned UUIDs**, so the practical order is
+export-then-edit rather than author-then-import:
+
+```bash
+# 1. Create the assets first (API, UI or NATS), then learn their ids
+edg-core -export-points ./points     # one empty file per asset that has a list
+
+# 2. Or read them straight off the API
+curl -s -H "Authorization: Bearer $EDG_HTTP_TOKEN" \
+  localhost:8080/api/v1/assets | jq -r '.data[] | "\(.id)\t\(.name)"'
+```
+
+A spreadsheet keyed on equipment names cannot be imported directly today; you
+need the ids. That is tracked as a usability gap, not a design intent.
+
+### HTTP API
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/v1/points` | Every declared list |
+| `GET` | `/api/v1/points?name=temp` | Search points by name across all assets |
+| `GET` | `/api/v1/assets/{id}/points` | One asset's list |
+| `PUT` | `/api/v1/assets/{id}/points` | Replace one asset's list |
+| `DELETE` | `/api/v1/assets/{id}/points` | Remove one asset's declarations |
+
+The search is the question a plant-wide inventory is actually for: *which boxes
+call this tag something else*. It is also in the operator UI's Points section.
+
+Writes need a bearer token like every other mutation, which is why the CLI paths
+above exist — a deployment that never sets `http.token_env` can still be
+provisioned.
+
+### Things worth knowing
+
+- **Points attach to an asset, not a template.** `template_resources` declares
+  what a *kind* of thing reports; a point declares where *this* box's copy
+  lives. Two pumps on the same template can and usually do have different
+  addresses.
+- **A write replaces the list wholesale.** That is the operation an operator
+  performs — *here is the list* — and a partial apply is what leaves a plant
+  half-provisioned. A point absent from the new list is removed.
+- **`version` advances on every write**, including one that changes nothing. It
+  is the signal adapters will compare against once distribution lands, and a
+  missed bump is worse than a redundant one.
+- **`created_at` is preserved per point** across a re-import, so after bulk
+  re-importing a spreadsheet you can still see which declarations are new.
+- **Adapters do not read these lists yet.** They still load their own
+  `mapping.yaml`. Declaring points centrally today gives you the inventory, the
+  backup and the review; distribution is the next phase. Until then a point list
+  and an adapter's actual configuration can disagree, and nothing detects it.
+- **Nothing marks a point writable.** Control is not implemented — neither SDK
+  can receive a command — so a `writable` flag would be a field with no readers
+  that made the gateway look like it can write to a PLC when it cannot.
+
 ## Asset Relations
 
 EDG Core stores directed asset relations and uses them to enrich validated data.

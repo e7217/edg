@@ -50,6 +50,36 @@ variable. To keep using an external Telegraf instead, set `sink.enabled: false`
 in the core config — `platform.data.validated` remains published for any
 external consumer.
 
+## 0005 asset points, and `auto_migrate: false`
+
+Migration `0005_asset_points` adds `asset_point_lists` and `asset_points`. If
+`storage.auto_migrate` is true — the default — there is nothing to do.
+
+**If you run with `auto_migrate: false`, apply migrations before upgrading.**
+The schema check at start-up now requires `asset_point_lists`, so a core that
+has not been migrated refuses to start with:
+
+```
+failed to verify DB schema: asset_point_lists table not found; run migrations or enable auto_migrate
+```
+
+That is deliberate. The point-list API and the `-import-points` CLI query that
+table unconditionally, so without the check the process would start cleanly and
+then fail at the first provisioning request — the harder failure to diagnose.
+
+```bash
+# Apply, then start normally
+edg-core -config /opt/edg/config.yaml   # with auto_migrate true once
+# or roll forward explicitly on a copy first if you prefer
+```
+
+Rolling back is `edg-core --migrate-down 1`, which drops both tables and every
+point declaration in them. Export first:
+
+```bash
+edg-core -export-points ./points-backup
+```
+
 ## Metric name change
 
 The stored metric is now `edg_data_number` instead of `nats_consumer_number`.

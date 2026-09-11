@@ -36,6 +36,8 @@ func main() {
 	checkConstraintsFlag := flag.Bool("check-constraints", false, "Check catalog template constraints and exit")
 	importTemplatesFlag := flag.String("import-templates", "", "Import templates from a directory into the metadata DB and exit")
 	exportTemplatesFlag := flag.String("export-templates", "", "Export templates from the metadata DB to a directory and exit")
+	importPointsFlag := flag.String("import-points", "", "Import per-asset point lists (<asset-id>.yaml) from a directory and exit")
+	exportPointsFlag := flag.String("export-points", "", "Export per-asset point lists to a directory and exit")
 	configFlag := flag.String("config", os.Getenv("EDG_CORE_CONFIG"), "Path to core configuration file")
 	flag.Parse()
 
@@ -85,6 +87,20 @@ func main() {
 	if *exportTemplatesFlag != "" {
 		if err := runExportTemplates(cfg, *exportTemplatesFlag); err != nil {
 			log.Fatalf("Failed to export templates: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	if *importPointsFlag != "" {
+		if err := runImportPoints(cfg, *importPointsFlag); err != nil {
+			log.Fatalf("Failed to import point lists: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	if *exportPointsFlag != "" {
+		if err := runExportPoints(cfg, *exportPointsFlag); err != nil {
+			log.Fatalf("Failed to export point lists: %v", err)
 		}
 		os.Exit(0)
 	}
@@ -377,6 +393,51 @@ func checkConstraints(cfg core.CoreConfig) (core.ConstraintsReport, error) {
 	}
 
 	return core.NewConstraintsEvaluator(loader).CheckAll(store)
+}
+
+// pointService opens the metadata store and builds the service the point-list
+// CLI paths write through, so file import obeys the same validation as the API.
+func pointService(cfg core.CoreConfig) (*core.MetadataService, func(), error) {
+	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	if err != nil {
+		return nil, nil, err
+	}
+	loader, err := core.NewTemplateLoaderWithStore(store)
+	if err != nil {
+		store.Close()
+		return nil, nil, err
+	}
+	svc := core.NewMetadataService(store, loader, nil, cfg.Constraints.Enforcement)
+	return svc, func() { store.Close() }, nil
+}
+
+func runImportPoints(cfg core.CoreConfig, dir string) error {
+	svc, close, err := pointService(cfg)
+	if err != nil {
+		return err
+	}
+	defer close()
+
+	n, err := svc.ImportPointLists(dir)
+	// n is reported even on error: a partial import has already happened and the
+	// operator needs to know how far it got.
+	log.Printf("[Core] Imported %d point list(s) from %s", n, dir)
+	return err
+}
+
+func runExportPoints(cfg core.CoreConfig, dir string) error {
+	svc, close, err := pointService(cfg)
+	if err != nil {
+		return err
+	}
+	defer close()
+
+	n, err := svc.ExportPointLists(dir)
+	if err != nil {
+		return err
+	}
+	log.Printf("[Core] Exported %d point list(s) to %s", n, dir)
+	return nil
 }
 
 func runImportTemplates(cfg core.CoreConfig, dir string) error {
