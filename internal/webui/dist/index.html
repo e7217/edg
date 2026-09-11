@@ -58,6 +58,15 @@
     <table><thead><tr><th>Name</th><th>Resources</th><th>Constraints</th></tr></thead><tbody id="templates"></tbody></table>
   </section>
   <section>
+    <h2>Points</h2>
+    <form id="point-search">
+      <input name="name" placeholder="search tag name across all assets" />
+      <button type="submit">Search</button>
+      <button type="button" id="point-clear">Show lists</button>
+    </form>
+    <table><thead><tr id="points-head"></tr></thead><tbody id="points"></tbody></table>
+  </section>
+  <section>
     <h2>Adapters</h2>
     <table><thead><tr><th>Adapter</th><th>Assets</th><th>Availability</th><th>Run</th><th>Device</th><th>Rate</th><th>Last HB</th><th>Version</th></tr></thead><tbody id="adapters"></tbody></table>
   </section>
@@ -126,6 +135,59 @@ async function loadTemplates() {
     tb.appendChild(tr);
   }
 }
+// Points has two modes in one table: the per-asset lists, and a flat search
+// across every asset. Search is the question an operator actually asks of a
+// plant-wide tag inventory -- "which boxes call this something else" -- so it
+// gets a first-class place rather than a filter on a paginated list.
+let pointQuery = "";
+
+function setHead(cols) {
+  const tr = $("points-head"); tr.innerHTML = "";
+  for (const c of cols) { const th = document.createElement("th"); th.textContent = c; tr.appendChild(th); }
+}
+
+async function loadPoints() {
+  const tb = $("points"); tb.innerHTML = "";
+  if (pointQuery) {
+    setHead(["Asset", "Protocol", "Point", "Type", "Unit", "Address", "Enabled"]);
+    const hits = (await api("GET", "/points?name=" + encodeURIComponent(pointQuery))) || [];
+    for (const h of hits) {
+      const tr = document.createElement("tr");
+      tr.append(cell(h.asset_id), cell(h.protocol), cell(h.name), cell(h.value_type),
+        cell(h.unit || ""), cell(h.address), cell(h.enabled ? "yes" : "no"));
+      tb.appendChild(tr);
+    }
+    if (hits.length === 0) tb.appendChild(emptyRow(7, "no point matches " + pointQuery));
+    return;
+  }
+
+  setHead(["Asset", "Protocol", "Points", "Poll", "Version", ""]);
+  const lists = (await api("GET", "/points")) || [];
+  for (const l of lists) {
+    const enabled = (l.points || []).filter(p => p.enabled).length;
+    const total = (l.points || []).length;
+    const tr = document.createElement("tr");
+    tr.append(cell(l.asset_id), cell(l.protocol),
+      // Disabled declarations are kept for the record, so show both numbers
+      // rather than a count that hides them.
+      cell(enabled === total ? String(total) : enabled + " of " + total + " enabled"),
+      cell(l.poll_interval_ms ? l.poll_interval_ms + " ms" : "adapter default"),
+      cell(l.version),
+      delBtn(() => mutate(() => api("DELETE", "/assets/" + encodeURIComponent(l.asset_id) + "/points"))));
+    tb.appendChild(tr);
+  }
+  if (lists.length === 0) {
+    tb.appendChild(emptyRow(6, "no point lists declared — import with edg-core -import-points DIR"));
+  }
+}
+
+function emptyRow(span, text) {
+  const tr = document.createElement("tr");
+  const td = document.createElement("td");
+  td.colSpan = span; td.textContent = text; td.style.color = "#888";
+  tr.appendChild(td); return tr;
+}
+
 async function loadViolations() {
   const report = await api("GET", "/constraints");
   const tb = $("violations"); tb.innerHTML = "";
@@ -219,7 +281,7 @@ function rowMessage(span, text) {
 async function refresh() {
   setStatus("loading…");
   try {
-    await Promise.all([loadAssets(), loadRelations(), loadTemplates(), loadViolations(), loadAdapters(), loadDrift()]);
+    await Promise.all([loadAssets(), loadRelations(), loadTemplates(), loadPoints(), loadViolations(), loadAdapters(), loadDrift()]);
     setStatus("updated " + new Date().toLocaleTimeString());
   } catch (e) { setStatus(e.message, true); }
 }
@@ -240,6 +302,16 @@ $("relation-form").onsubmit = (e) => {
   mutate(() => api("POST", "/relations", {
     source_asset_id: f.source_asset_id.value, target_asset_id: f.target_asset_id.value, relation_type: f.relation_type.value,
   })).then(() => f.reset());
+};
+$("point-search").onsubmit = (e) => {
+  e.preventDefault();
+  pointQuery = e.target.name.value.trim();
+  loadPoints().catch((err) => setStatus(err.message, true));
+};
+$("point-clear").onclick = () => {
+  pointQuery = "";
+  $("point-search").reset();
+  loadPoints().catch((err) => setStatus(err.message, true));
 };
 refresh();
 </script>

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"strings"
 )
 
 // Store is a SQLite-based metadata store
@@ -29,18 +30,12 @@ func NewStoreWithMigrations(dbPath string, autoMigrate bool) (*Store, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite3", withForeignKeys(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open DB: %w", err)
 	}
 	if dbPath == ":memory:" {
 		db.SetMaxOpenConns(1)
-	}
-
-	// Enable foreign key constraints
-	if _, err := db.Exec("PRAGMA foreign_keys = ON"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
 	}
 
 	store := &Store{db: db}
@@ -61,6 +56,23 @@ func NewStoreWithMigrations(dbPath string, autoMigrate bool) (*Store, error) {
 	return store, nil
 }
 
+// withForeignKeys puts the foreign-keys pragma in the DSN so that every
+// connection the pool opens has it on.
+//
+// `PRAGMA foreign_keys = ON` executed against the *sql.DB applies only to
+// whichever pooled connection happens to serve it. For a file-backed database
+// the pool is unbounded, so the rest were left with enforcement off and a
+// cascade fired or did not depending on which connection the delete landed on.
+// Measured before this change: two of eight concurrent reads of the pragma
+// returned 0.
+func withForeignKeys(dbPath string) string {
+	const param = "_foreign_keys=on"
+	if strings.Contains(dbPath, "?") {
+		return dbPath + "&" + param
+	}
+	return dbPath + "?" + param
+}
+
 func verifyStoreSchema(db *sql.DB) error {
 	var count int
 	if err := db.QueryRow(
@@ -79,6 +91,19 @@ func verifyStoreSchema(db *sql.DB) error {
 	}
 	if count == 0 {
 		return fmt.Errorf("asset_relations table not found; run migrations or enable auto_migrate")
+	}
+
+	// asset_point_lists is checked because the point-list API and the CLI
+	// importer query it unconditionally. Without this an auto_migrate=false
+	// deployment starts cleanly and then fails at the first provisioning
+	// request instead of at boot, which is the harder failure to diagnose.
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'asset_point_lists'`,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("asset_point_lists table not found; run migrations or enable auto_migrate")
 	}
 
 	return nil

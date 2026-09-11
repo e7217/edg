@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,10 @@ func TestRouteLabelsCoverEveryRegisteredPattern(t *testing.T) {
 		{http.MethodDelete, "/api/v1/assets/x"},
 		{http.MethodPost, "/api/v1/relations"},
 		{http.MethodDelete, "/api/v1/relations/x"},
+		{http.MethodGet, "/api/v1/points"},
+		{http.MethodGet, "/api/v1/assets/x/points"},
+		{http.MethodPut, "/api/v1/assets/x/points"},
+		{http.MethodDelete, "/api/v1/assets/x/points"},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			req, _ := serve(t, srv, tc.method, tc.path)
@@ -111,6 +116,42 @@ func TestRouteLabelsCoverEveryRegisteredPattern(t *testing.T) {
 				t.Errorf("pattern %q is registered on the mux but missing from routeLabels, so its requests fold into route=\"other\"", req.Pattern)
 			}
 		})
+	}
+}
+
+// The list above is hand-maintained and so cannot catch a route nobody thought
+// to add. Assert the other direction as well: every declared label must
+// correspond to a pattern the mux actually serves, which fails when a route is
+// renamed or removed and its label left behind.
+func TestEveryRouteLabelIsAServedPattern(t *testing.T) {
+	// Its own server with the webui enabled: "GET /" is in routeLabels, and the
+	// file server it mounts would otherwise swallow the unmatched-route test's
+	// request, so the two cannot share a fixture.
+	registry := core.NewAdapterRegistry(core.AdapterRegistryOptions{})
+	registry.Observe(adapterFrame("modbus-1", "sensor-1"), "modbus-1", time.Now())
+	srv := newHTTPTestServer(newHTTPTestStore(t), Options{
+		Adapters:     registry,
+		Token:        metricsTestToken,
+		WebUIEnabled: true,
+	})
+	handler := srv.Handler()
+
+	for _, label := range routeLabels {
+		method, pattern, ok := strings.Cut(label, " ")
+		if !ok {
+			t.Errorf("route label %q is not \"METHOD /path\"", label)
+			continue
+		}
+		// Turn the pattern back into a concrete path: {id} -> x.
+		path := regexp.MustCompile(`\{[^}]+\}`).ReplaceAllString(pattern, "x")
+		req := httptest.NewRequest(method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+metricsTestToken)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+
+		if req.Pattern != label {
+			t.Errorf("label %q resolved to pattern %q; the label is stale or the route moved",
+				label, req.Pattern)
+		}
 	}
 }
 

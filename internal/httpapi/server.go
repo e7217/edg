@@ -109,6 +109,7 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /api/v1/templates/{name}", s.handleTemplate)
 	mux.HandleFunc("GET /api/v1/constraints", s.handleConstraints)
 	s.registerAdapterRoutes(mux)
+	s.registerPointRoutes(mux)
 
 	// Write endpoints (Phase 3). All mutations go through MetadataService so
 	// validation, constraint enforcement, and change events match the NATS path.
@@ -148,6 +149,10 @@ var routeLabels = []string{
 	"GET /api/v1/templates",
 	"GET /api/v1/templates/{name}",
 	"GET /api/v1/constraints",
+	"GET /api/v1/points",
+	"GET /api/v1/assets/{id}/points",
+	"PUT /api/v1/assets/{id}/points",
+	"DELETE /api/v1/assets/{id}/points",
 	"GET /api/v1/adapters",
 	"GET /api/v1/adapters/drift",
 	"GET /api/v1/adapters/{id}",

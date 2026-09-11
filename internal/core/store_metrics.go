@@ -121,11 +121,17 @@ func (s *Store) RegisterMetrics(r *metrics.Registry, opts StoreMetricsOptions) {
 		Name: "edg_core_store_relations",
 		Help: "Declared asset relations in master data, refreshed at most once per minute.",
 	}, func() float64 { return float64(counts.get().relations) })
+
+	r.NewFuncGauge(metrics.Desc{
+		Name: "edg_core_store_points",
+		Help: "Declared points across every asset. This is the plant's tag inventory; compare it with edg_core_data_values_total to see how much of what is declared is actually reporting.",
+	}, func() float64 { return float64(counts.get().points) })
 }
 
 type storeCounts struct {
 	assets    int
 	relations int
+	points    int
 }
 
 // cachedStoreCounts serves the last successful counts and refreshes them at
@@ -178,6 +184,9 @@ func (c *cachedStoreCounts) fetch() (storeCounts, error) {
 		return storeCounts{}, err
 	}
 	if err := c.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM asset_relations`).Scan(&out.relations); err != nil {
+		return storeCounts{}, err
+	}
+	if err := c.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM asset_points`).Scan(&out.points); err != nil {
 		return storeCounts{}, err
 	}
 	return out, nil

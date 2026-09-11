@@ -439,6 +439,7 @@ func TestStoreMetrics(t *testing.T) {
 	}
 	assert.Contains(t, out, "edg_core_store_assets 2")
 	assert.Contains(t, out, "edg_core_store_relations 0")
+	assert.Contains(t, out, "edg_core_store_points 0")
 }
 
 // The counts share the single SQLite handle with the ingest path, and

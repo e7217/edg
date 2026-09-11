@@ -165,12 +165,15 @@ graph LR
 
 We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
 
-*   **Phase 1: Basic Control (Current)**
-    *   Simple 1:1 Command/Response pattern.
-    *   Secure execution of device commands via adapters.
-*   **Phase 2: Advanced Logic (Planned)**
-    *   Relationship-based control (Ontology) - design in [ADR 0003](docs/adr/0003-relationship-based-control.md).
-    *   Automated sequences and conditional triggers - design in [ADR 0003](docs/adr/0003-relationship-based-control.md).
+*   **Point provisioning (partly shipped)**
+    *   The plant's tag inventory is master data: which address on a device maps to which tag name, type and unit, declared per asset and editable in one place. See [Point Provisioning](docs/USER_GUIDE.md#point-provisioning).
+    *   Distributing those lists to running adapters is not done yet; they still read a local mapping file.
+*   **Basic control (not implemented)**
+    *   Simple 1:1 command/response, and secure execution of device commands via adapters.
+    *   Nothing of this exists in the code yet. Neither SDK can receive a command: a collector's only method is `Collect`. This entry said "Current" for a long time and was wrong.
+*   **Advanced logic (designed, not implemented)**
+    *   Relationship-based control over the ontology - design in [ADR 0003](docs/adr/0003-relationship-based-control.md).
+    *   Automated sequences and conditional triggers - design in [ADR 0004](docs/adr/0004-ontology-rule-engine.md).
 
 ## Documentation
 

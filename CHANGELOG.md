@@ -66,6 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Point provisioning: the plant's tag inventory is now master data. Points are
+  declared per asset — address, tag name, value type, unit and protocol-specific
+  encoding — with a bulk `-import-points` / `-export-points` CLI path, an HTTP
+  API including a plant-wide point-name search, and a Points section in the
+  operator UI. Adapters do not consume these lists yet; distribution is the next
+  phase. See [Point Provisioning](docs/USER_GUIDE.md#point-provisioning).
+
 - Documented the data plane reliability model in ADR 0001
 - Added configurable JetStream stream policy and dead-letter subject handling
 - Added Go chaos regressions for JetStream backlog recovery, discard pressure,
@@ -105,6 +112,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config, and release-pipeline steps have been removed.
 
 ### Fixed
+
+- Foreign keys were enforced on only one pooled connection. `PRAGMA
+  foreign_keys = ON` was executed against the `*sql.DB`, which applies to
+  whichever connection happens to serve it, and the pool is unbounded for a
+  file-backed database. Measured: two of eight concurrent reads of the pragma
+  returned 0, so a cascade fired or did not depending on which connection the
+  delete landed on. The pragma now travels in the DSN, so every connection has
+  it. This affected the existing template cascades as well.
+
+- `README.md` listed basic command/response control as "Current". It is not
+  implemented — neither SDK can receive a command. The roadmap now says so.
 
 - Removed the in-memory buffer in `DataHandler` that retained every message
   the process had ever received. Nothing read the entries; storage is

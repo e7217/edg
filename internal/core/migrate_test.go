@@ -67,9 +67,18 @@ func TestMigrationDownSteps(t *testing.T) {
 	defer db.Close()
 
 	require.NoError(t, runMigrations(db))
+	require.True(t, tableExists(t, db, "asset_point_lists"))
+	require.True(t, tableExists(t, db, "asset_points"))
 	require.True(t, tableExists(t, db, "templates"))
 	require.True(t, columnExists(t, db, "assets", "source"))
 	require.True(t, indexExists(t, db, "idx_relations_source_type"))
+
+	// Undo 0005 (asset points).
+	require.NoError(t, runMigrationSteps(db, -1))
+	assert.False(t, tableExists(t, db, "asset_points"))
+	assert.False(t, tableExists(t, db, "asset_point_lists"))
+	assert.False(t, indexExists(t, db, "idx_asset_points_name"))
+	assert.True(t, tableExists(t, db, "templates"))
 
 	// Undo 0004 (templates).
 	require.NoError(t, runMigrationSteps(db, -1))
