@@ -47,8 +47,26 @@ func (s *MetadataService) CreateAsset(req CreateAssetRequest) (*Asset, error) {
 		return nil, newServiceError(ErrValidation, "template not found")
 	}
 
+	id := req.ID
+	if id == "" {
+		id = uuid.New().String()
+	} else {
+		if err := ValidateAssetID(id); err != nil {
+			return nil, newServiceError(ErrValidation, "%s", err.Error())
+		}
+		// A duplicate id is a conflict, not an overwrite. Silently replacing an
+		// asset would take its point list and relations with it.
+		existing, err := s.store.GetAsset(id)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return nil, newServiceError(ErrConflict, "asset id already exists")
+		}
+	}
+
 	asset := &Asset{
-		ID:           uuid.New().String(),
+		ID:           id,
 		Name:         req.Name,
 		TemplateName: req.TemplateName,
 		Labels:       req.Labels,

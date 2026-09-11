@@ -165,6 +165,15 @@ func (h *MetaHandler) reply(msg *nats.Msg, resp Response) {
 
 // CreateAssetRequest is a request to create an asset
 type CreateAssetRequest struct {
+	// ID is optional. When empty the server generates a UUID, which is what it
+	// always did. When set, the operator owns the identity -- and that matters
+	// because the id is the only join between a declared asset and the
+	// telemetry an adapter publishes for it. An adapter publishes whatever its
+	// own config says, typically derived like "modbus-127.0.0.1-1"; with
+	// server-generated UUIDs there was no way to make the two agree, so a plant
+	// could hold a complete point inventory and still have every reading arrive
+	// as an undeclared asset.
+	ID           string            `json:"id,omitempty"`
 	Name         string            `json:"name"`
 	TemplateName string            `json:"template_name,omitempty"`
 	Labels       []string          `json:"labels,omitempty"`
