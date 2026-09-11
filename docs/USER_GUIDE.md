@@ -355,6 +355,7 @@ Subject: `platform.meta.asset.create`
 
 ```json
 {
+  "id": "pump-101",
   "name": "pump-101",
   "template_name": "vibration-sensor",
   "labels": ["line-a", "critical"],
@@ -369,6 +370,12 @@ Subject: `platform.meta.asset.create`
   }
 }
 ```
+
+`id` is optional; omit it and the server generates a UUID. Supply it when you
+need the declared id to match what an adapter publishes — see
+[Point Provisioning](#point-provisioning) for why that matters. It must start
+with a letter or digit and contain only letters, digits and `. _ : -`, and a
+duplicate is a conflict rather than an overwrite.
 
 If `source` is omitted, EDG Core stores `manual`.
 
@@ -447,20 +454,35 @@ The file name is the asset id. A file whose `asset_id:` disagrees with its name
 is rejected rather than resolved in either direction — silently preferring one
 is how a whole directory ends up on a single asset.
 
-**Asset ids are server-assigned UUIDs**, so the practical order is
-export-then-edit rather than author-then-import:
+**Choose the asset id when you create the asset**, and the point file is named
+after something you can type:
 
 ```bash
-# 1. Create the assets first (API, UI or NATS), then learn their ids
-edg-core -export-points ./points     # one empty file per asset that has a list
+curl -X POST -H "Authorization: Bearer $EDG_HTTP_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"pump-a","name":"Pump A","template_name":"pump"}' \
+  localhost:8080/api/v1/assets
+```
 
-# 2. Or read them straight off the API
+Omit `id` and the server generates a UUID, as it always did. Supplying one
+matters for more than filenames: **the asset id is the only join between a
+declared asset and the telemetry an adapter publishes for it.** An adapter
+publishes whatever its own configuration says — the reference adapters derive
+`modbus-127.0.0.1-1` from their host and unit id — so if the declared id is a
+UUID, nothing an adapter sends will ever match a declared asset, and with
+`unknown_asset_policy: pass_through` the data flows on un-enriched with no
+warning.
+
+Set the declared id to what the adapter actually publishes, or configure the
+adapter to publish the id you declared. An id must start with a letter or digit
+and contain only letters, digits and `. _ : -`.
+
+If you already have assets on generated UUIDs, read them off the API:
+
+```bash
 curl -s -H "Authorization: Bearer $EDG_HTTP_TOKEN" \
   localhost:8080/api/v1/assets | jq -r '.data[] | "\(.id)\t\(.name)"'
 ```
-
-A spreadsheet keyed on equipment names cannot be imported directly today; you
-need the ids. That is tracked as a usability gap, not a design intent.
 
 ### HTTP API
 

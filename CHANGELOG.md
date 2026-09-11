@@ -66,6 +66,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `POST /api/v1/assets` and `platform.meta.asset.create` accept an optional
+  `id`. Omitted, the server generates a UUID as before. Supplied, the operator
+  owns the identity — which matters because the asset id is the only join
+  between a declared asset and the telemetry an adapter publishes for it. With
+  generated UUIDs there was no way to make the two agree, so a plant could hold
+  a complete point inventory and still have every reading arrive as an
+  undeclared asset (#129).
+
 - Point provisioning: the plant's tag inventory is now master data. Points are
   declared per asset — address, tag name, value type, unit and protocol-specific
   encoding — with a bulk `-import-points` / `-export-points` CLI path, an HTTP
