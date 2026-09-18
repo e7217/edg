@@ -1,4 +1,5 @@
-// Command modbus_tcp_sensor is a reference Modbus TCP adapter. Edit
+// Command modbus_tcp_sensor is a reference Modbus adapter, over TCP or RTU
+// (serial, transport: rtu). Edit
 // mapping.yaml (or pass a custom path) and run:
 //
 //	go run . [path/to/mapping.yaml]
@@ -41,14 +42,18 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	endpoint := cfg.Host
+	if cfg.Transport == TransportRTU {
+		endpoint = filepath.Base(cfg.Serial.Port)
+	}
 	acfg := sdk.AdapterConfig{
-		AssetID:         fmt.Sprintf("modbus-%s-%d", cfg.Host, cfg.UnitID),
+		AssetID:         fmt.Sprintf("modbus-%s-%d", endpoint, cfg.UnitID),
 		NATSURL:         cfg.NATSURL,
 		CollectInterval: time.Duration(cfg.PollInterval * float64(time.Second)),
 		AdapterVersion:  "modbus-tcp-example",
 		Metadata: map[string]string{
-			"protocol": ProtocolModbusTCP,
-			"host":     cfg.Host,
+			"protocol": cfg.Protocol(),
+			"host":     endpoint,
 			"unit_id":  fmt.Sprintf("%d", cfg.UnitID),
 		},
 	}
@@ -56,7 +61,7 @@ func main() {
 	if cfg.Provisioned() {
 		acfg.AssetID = cfg.AssetID
 		err = sdk.RunProvisioned(ctx, sdk.ProvisionedConfig{Adapter: acfg}, func(pl *sdk.PointList) (sdk.Collector, error) {
-			regs, err := registersFromPoints(pl)
+			regs, err := registersFromPoints(pl, cfg.Protocol())
 			if err != nil {
 				return nil, err
 			}
