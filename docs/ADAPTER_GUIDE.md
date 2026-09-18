@@ -153,7 +153,31 @@ err := sdk.RunProvisioned(ctx, sdk.ProvisionedConfig{
 await run_provisioned("pump-a", lambda pl: MyAdapter(pl, asset_id="pump-a"), nats_url=url)
 ```
 
-Modbus RTU (serial), write function codes, and multi-unit deployments are intentionally out of scope for these references; copy the example and extend as needed.
+### Modbus RTU (serial)
+
+The Go reference also speaks Modbus RTU over a serial line — RS-485 on most
+plant floors. The register map and provisioning are the same; only the
+connection changes:
+
+```yaml
+transport: rtu
+serial:
+  port: /dev/ttyUSB0     # COM3 on Windows
+  baud_rate: 9600        # default 9600
+  data_bits: 8           # default 8
+  parity: E              # N | E | O, default E (the Modbus specification's)
+  stop_bits: 1           # default 1
+unit_id: 3
+asset_id: kiln-1         # or list registers: as for TCP
+```
+
+Set `parity` and `stop_bits` to what the device's panel says: many ship `N` with
+one stop bit, which the specification would pair with two. A point list for an
+RTU adapter declares `protocol: modbus-rtu`; one declared `modbus-tcp` is
+refused, so a list cannot be applied to the wrong kind of adapter. The Python
+reference is TCP only.
+
+Write function codes and several units on one adapter are intentionally out of scope for these references; copy the example and extend as needed.
 
 ## OPC UA Reference Adapter
 

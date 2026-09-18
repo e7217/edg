@@ -16,7 +16,7 @@ func TestRegistersFromPoints(t *testing.T) {
 			Encoding: map[string]any{"function": "input", "type": "float32", "word_order": "CDAB"}},
 		{Name: "retired", Address: "7", Enabled: false, Encoding: map[string]any{"type": "uint16"}},
 	}}
-	regs, err := registersFromPoints(pl)
+	regs, err := registersFromPoints(pl, ProtocolModbusTCP)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestRegistersFromPointsRejectsTheWholeList(t *testing.T) {
 	}
 	for want, p := range cases {
 		good := sdk.Point{Name: "ok", Address: "0", Enabled: true, Encoding: map[string]any{"type": "uint16"}}
-		_, err := registersFromPoints(&sdk.PointList{Points: []sdk.Point{good, p}})
+		_, err := registersFromPoints(&sdk.PointList{Points: []sdk.Point{good, p}}, ProtocolModbusTCP)
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v", want, err)
 		}
@@ -50,7 +50,7 @@ func TestRegistersFromPointsRejectsTheWholeList(t *testing.T) {
 }
 
 func TestRegistersFromPointsRefusesAnotherProtocol(t *testing.T) {
-	_, err := registersFromPoints(&sdk.PointList{Protocol: "opcua"})
+	_, err := registersFromPoints(&sdk.PointList{Protocol: "opcua"}, ProtocolModbusTCP)
 	if err == nil || !strings.Contains(err.Error(), "opcua") {
 		t.Fatalf("err = %v", err)
 	}

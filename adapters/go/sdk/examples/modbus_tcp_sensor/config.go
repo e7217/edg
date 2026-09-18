@@ -9,7 +9,11 @@ import (
 
 // ModbusConfig is the top-level mapping YAML schema.
 type ModbusConfig struct {
-	Version      int            `yaml:"version"`
+	Version int `yaml:"version"`
+	// Transport is "tcp" (default) or "rtu". RTU reads the same registers
+	// over a serial line; Host and Port are then unused and Serial applies.
+	Transport    string         `yaml:"transport"`
+	Serial       SerialConfig   `yaml:"serial"`
 	Host         string         `yaml:"host"`
 	Port         int            `yaml:"port"`
 	UnitID       byte           `yaml:"unit_id"`
@@ -25,6 +29,32 @@ type ModbusConfig struct {
 	// NATSURL is EDG Core's NATS address, credentials included. Empty uses
 	// nats://localhost:4222; EDG_NATS_URL overrides it.
 	NATSURL string `yaml:"nats_url"`
+}
+
+// Transports.
+const (
+	TransportTCP = "tcp"
+	TransportRTU = "rtu"
+)
+
+// SerialConfig is the serial line of a Modbus RTU transport.
+type SerialConfig struct {
+	Port     string `yaml:"port"`      // /dev/ttyUSB0, COM3
+	BaudRate int    `yaml:"baud_rate"` // default 9600
+	DataBits int    `yaml:"data_bits"` // default 8
+	// Parity is N, E or O. The Modbus specification's default is E; many
+	// devices ship configured N, which the specification pairs with two stop
+	// bits. Set both to what the device's panel says.
+	Parity   string `yaml:"parity"`
+	StopBits int    `yaml:"stop_bits"` // default 1
+}
+
+// Protocol is the point-list protocol this configuration reads.
+func (c *ModbusConfig) Protocol() string {
+	if c.Transport == TransportRTU {
+		return ProtocolModbusRTU
+	}
+	return ProtocolModbusTCP
 }
 
 // Provisioned reports whether registers come from master data.
@@ -56,8 +86,18 @@ func LoadConfig(path string) (*ModbusConfig, error) {
 	if _, ok := supportedVersions[cfg.Version]; !ok {
 		return nil, fmt.Errorf("unsupported config version: %d", cfg.Version)
 	}
-	if cfg.Host == "" {
-		return nil, fmt.Errorf("'host' is required")
+	switch cfg.Transport {
+	case "", TransportTCP:
+		cfg.Transport = TransportTCP
+		if cfg.Host == "" {
+			return nil, fmt.Errorf("'host' is required")
+		}
+	case TransportRTU:
+		if err := cfg.Serial.applyDefaults(); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("transport %q not supported (tcp, rtu)", cfg.Transport)
 	}
 	if cfg.Port == 0 {
 		cfg.Port = 502
@@ -101,6 +141,30 @@ func validateAndDefault(r *RegisterSpec, index int) error {
 	}
 	if r.Scale == 0 {
 		r.Scale = 1.0
+	}
+	return nil
+}
+
+func (s *SerialConfig) applyDefaults() error {
+	if s.Port == "" {
+		return fmt.Errorf("'serial.port' is required for transport rtu, e.g. /dev/ttyUSB0")
+	}
+	if s.BaudRate == 0 {
+		s.BaudRate = 9600
+	}
+	if s.DataBits == 0 {
+		s.DataBits = 8
+	}
+	if s.Parity == "" {
+		s.Parity = "E"
+	}
+	switch s.Parity {
+	case "N", "E", "O":
+	default:
+		return fmt.Errorf("serial.parity %q not supported (N, E, O)", s.Parity)
+	}
+	if s.StopBits == 0 {
+		s.StopBits = 1
 	}
 	return nil
 }

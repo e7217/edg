@@ -12,9 +12,9 @@ import (
 // RegisterSpec dataclass. Field tags map to the YAML schema.
 type RegisterSpec struct {
 	Name      string  `yaml:"name"`
-	Function  string  `yaml:"function"`  // "holding" | "input"
+	Function  string  `yaml:"function"` // "holding" | "input"
 	Address   uint16  `yaml:"address"`
-	Type      string  `yaml:"type"`      // uint16 | int16 | uint32 | int32 | float32
+	Type      string  `yaml:"type"` // uint16 | int16 | uint32 | int32 | float32
 	WordOrder string  `yaml:"word_order"`
 	Scale     float64 `yaml:"scale"`
 	Unit      string  `yaml:"unit"`

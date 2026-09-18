@@ -14,13 +14,21 @@ import (
 )
 
 // ModbusDevice implements sdk.Collector + sdk.DeviceLifecycle for a single
-// Modbus TCP slave. One ModbusDevice serves all registers from one host.
+// Modbus slave, over TCP or RTU (serial). One ModbusDevice serves all
+// registers from one unit.
 type ModbusDevice struct {
 	cfg *ModbusConfig
 
 	mu      sync.Mutex
-	handler *modbus.TCPClientHandler
+	handler transportHandler
 	client  modbus.Client
+}
+
+// transportHandler is what TCPClientHandler and RTUClientHandler share.
+type transportHandler interface {
+	modbus.ClientHandler
+	Connect() error
+	Close() error
 }
 
 // NewModbusDevice builds a device but does not connect; the SDK calls
@@ -33,9 +41,24 @@ func (d *ModbusDevice) ConnectDevice(_ context.Context) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	h := modbus.NewTCPClientHandler(fmt.Sprintf("%s:%d", d.cfg.Host, d.cfg.Port))
-	h.Timeout = time.Duration(d.cfg.Timeout * float64(time.Second))
-	h.SlaveId = d.cfg.UnitID
+	timeout := time.Duration(d.cfg.Timeout * float64(time.Second))
+	var h transportHandler
+	switch d.cfg.Transport {
+	case TransportRTU:
+		rtu := modbus.NewRTUClientHandler(d.cfg.Serial.Port)
+		rtu.BaudRate = d.cfg.Serial.BaudRate
+		rtu.DataBits = d.cfg.Serial.DataBits
+		rtu.Parity = d.cfg.Serial.Parity
+		rtu.StopBits = d.cfg.Serial.StopBits
+		rtu.Timeout = timeout
+		rtu.SlaveId = d.cfg.UnitID
+		h = rtu
+	default:
+		tcp := modbus.NewTCPClientHandler(fmt.Sprintf("%s:%d", d.cfg.Host, d.cfg.Port))
+		tcp.Timeout = timeout
+		tcp.SlaveId = d.cfg.UnitID
+		h = tcp
+	}
 	if err := h.Connect(); err != nil {
 		return fmt.Errorf("%w: %v", sdk.ErrDeviceConnection, err)
 	}

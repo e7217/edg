@@ -7,8 +7,11 @@ import (
 	"github.com/e7217/edg/adapters/go/sdk"
 )
 
-// ProtocolModbusTCP is the point-list protocol this adapter reads.
-const ProtocolModbusTCP = "modbus-tcp"
+// Point-list protocols this adapter reads.
+const (
+	ProtocolModbusTCP = "modbus-tcp"
+	ProtocolModbusRTU = "modbus-rtu"
+)
 
 // registersFromPoints turns a declared point list into a register map. The
 // point's address is the register number and its encoding carries what a
@@ -16,9 +19,9 @@ const ProtocolModbusTCP = "modbus-tcp"
 //
 // One bad point rejects the whole list rather than being skipped: a register
 // map with a hole in it polls successfully and reports nothing about the hole.
-func registersFromPoints(pl *sdk.PointList) ([]RegisterSpec, error) {
-	if pl.Protocol != "" && pl.Protocol != ProtocolModbusTCP {
-		return nil, fmt.Errorf("point list protocol is %q; this adapter reads %q", pl.Protocol, ProtocolModbusTCP)
+func registersFromPoints(pl *sdk.PointList, protocol string) ([]RegisterSpec, error) {
+	if pl.Protocol != "" && pl.Protocol != protocol {
+		return nil, fmt.Errorf("point list protocol is %q; this adapter is configured for %q", pl.Protocol, protocol)
 	}
 	points := pl.EnabledPoints()
 	regs := make([]RegisterSpec, 0, len(points))
