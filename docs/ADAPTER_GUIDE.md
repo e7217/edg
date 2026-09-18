@@ -155,6 +155,47 @@ await run_provisioned("pump-a", lambda pl: MyAdapter(pl, asset_id="pump-a"), nat
 
 Modbus RTU (serial), write function codes, and multi-unit deployments are intentionally out of scope for these references; copy the example and extend as needed.
 
+## OPC UA Reference Adapter
+
+[`adapters/go/sdk/examples/opcua_sensor`](../adapters/go/sdk/examples/opcua_sensor)
+reads a set of variables from one OPC UA server in a single Read request per
+poll, using [`gopcua/opcua`](https://github.com/gopcua/opcua) (MIT):
+
+```yaml
+endpoint: opc.tcp://192.168.10.30:4840
+# username: operator      # omit for anonymous
+# password: secret
+poll_interval: 1.0
+nodes:
+  - name: temperature
+    node_id: "ns=2;s=Temperature"
+    unit: "°C"
+```
+
+Or, with `asset_id` and no `nodes`, from master data: each point's `address`
+is its NodeId, and `encoding` is unused.
+
+```yaml
+# declared in EDG for press-01
+protocol: opcua
+points:
+  - {name: temperature, value_type: NUMBER, unit: "°C", address: "ns=2;s=Temperature"}
+  - {name: running,     value_type: FLAG,   address: "ns=2;s=Running"}
+  - {name: state,       value_type: TEXT,   address: "ns=2;s=State"}
+```
+
+- **Types map to the three reading kinds**: integers, floats and DateTime (as
+  epoch ms) → `number`; Boolean → `flag`; String and LocalizedText → `text`.
+  Other types are skipped and logged.
+- **Status maps to quality**: Good → `GOOD`, Uncertain → `UNCERTAIN`. A Bad
+  node yields no value that poll and is logged — there is no reading to report.
+- **A NodeId must be written in full** (`ns=2;s=Temperature`, `i=2258`). A bare
+  number would parse as `ns=0;i=<n>`, which is nearly always a Modbus register
+  pasted into the wrong list, so it is refused.
+- **Security mode None only**, with anonymous or username login. Signing and
+  encryption need certificates on both ends; extend `ConnectDevice` when a
+  server requires them.
+
 ## Metadata Change Events
 
 Subscribe to `platform.meta.*.changed` to react to asset and relation metadata changes. EDG Core publishes these events after successful store mutations only; failed create, update, or delete requests do not emit events.
