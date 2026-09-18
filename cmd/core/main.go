@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -38,6 +39,9 @@ func main() {
 	exportTemplatesFlag := flag.String("export-templates", "", "Export templates from the metadata DB to a directory and exit")
 	importPointsFlag := flag.String("import-points", "", "Import per-asset point lists (<asset-id>.yaml) from a directory and exit")
 	exportPointsFlag := flag.String("export-points", "", "Export per-asset point lists to a directory and exit")
+	exportPlantFlag := flag.String("export-plant", "", "Export all master data (templates, assets.csv, relations.csv, points.csv) to a directory and exit")
+	importPlantFlag := flag.String("import-plant", "", "Import a plant bundle written by -export-plant (or edited in a spreadsheet) and exit")
+	dryRunFlag := flag.Bool("dry-run", false, "With -import-plant: apply to a copy of the metadata DB and report what would change")
 	configFlag := flag.String("config", os.Getenv("EDG_CORE_CONFIG"), "Path to core configuration file")
 	flag.Parse()
 
@@ -101,6 +105,24 @@ func main() {
 	if *exportPointsFlag != "" {
 		if err := runExportPoints(cfg, *exportPointsFlag); err != nil {
 			log.Fatalf("Failed to export point lists: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	if *exportPlantFlag != "" {
+		if err := runExportPlant(cfg, *exportPlantFlag); err != nil {
+			log.Fatalf("Failed to export plant: %v", err)
+		}
+		os.Exit(0)
+	}
+
+	if *importPlantFlag != "" {
+		failed, err := runImportPlant(cfg, *importPlantFlag, *dryRunFlag)
+		if err != nil {
+			log.Fatalf("Failed to import plant: %v", err)
+		}
+		if failed {
+			os.Exit(1)
 		}
 		os.Exit(0)
 	}
@@ -186,6 +208,7 @@ func main() {
 	// InProcessServer bypasses the TCP listener entirely, so the core identity
 	// never crosses a socket and is unaffected by the bind address. Auth is
 	// still enforced on this path.
+	//
 	// closed fires when the connection has finished draining. Shutdown waits
 	// on it: Drain returns before the buffered acks and naks are flushed, and
 	// shutting the server down under them leaves the sink's in-flight
@@ -466,6 +489,80 @@ func runExportPoints(cfg core.CoreConfig, dir string) error {
 	}
 	log.Printf("[Core] Exported %d point list(s) to %s", n, dir)
 	return nil
+}
+
+func runExportPlant(cfg core.CoreConfig, dir string) error {
+	svc, close, err := pointService(cfg)
+	if err != nil {
+		return err
+	}
+	defer close()
+	if err := svc.ExportPlant(dir); err != nil {
+		return err
+	}
+	log.Printf("[Core] Exported plant master data to %s", dir)
+	return nil
+}
+
+// runImportPlant applies a bundle and prints what it did. It reports failure
+// (for the exit status) when any row was rejected, after applying every row
+// that was not.
+//
+// With dryRun the import runs against a copy of the metadata DB that is then
+// thrown away, so the report is exactly what a real import would do -- the
+// same validation, constraint checks and conflicts -- without a second
+// implementation of any of them.
+func runImportPlant(cfg core.CoreConfig, dir string, dryRun bool) (failed bool, err error) {
+	if dryRun {
+		tmp, err := os.MkdirTemp("", "edg-dry-run-")
+		if err != nil {
+			return false, err
+		}
+		defer os.RemoveAll(tmp)
+		copyPath := filepath.Join(tmp, "metadata.db")
+		if err := copyFile(cfg.Storage.MetadataDB, copyPath); err != nil && !os.IsNotExist(err) {
+			return false, fmt.Errorf("copy metadata DB for dry run: %w", err)
+		}
+		cfg.Storage.MetadataDB = copyPath
+	}
+
+	svc, close, err := pointService(cfg)
+	if err != nil {
+		return false, err
+	}
+	defer close()
+	rep, err := svc.ImportPlant(dir)
+	if dryRun {
+		fmt.Println("DRY RUN -- nothing was written. A real import would do:")
+	}
+	fmt.Print(rep.String())
+	if err != nil {
+		return true, err
+	}
+	if !dryRun && (rep.Assets.Created+rep.Assets.Updated+rep.Relations.Created+rep.Points.Created+rep.Points.Updated > 0) {
+		fmt.Println("A running edg-core does not see these writes as events: restart it, or adapters " +
+			"provisioned from these point lists pick them up at their next reconcile (5 min).")
+	}
+	return len(rep.Problems) > 0, nil
+}
+
+// copyFile copies an SQLite database file. It is only used for a dry run, on
+// the file as it is at this instant; a WAL or journal beside it is not copied.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }
 
 func runImportTemplates(cfg core.CoreConfig, dir string) error {
