@@ -52,6 +52,9 @@ type AdapterAssetStatus struct {
 	CollectErrorsTotal int64      `json:"collect_errors_total"`
 	LastError          string     `json:"last_error,omitempty"`
 	LastErrorAt        *time.Time `json:"last_error_at,omitempty"`
+	// ConfigVersion is the point-list version this adapter is running for the
+	// asset; 0 when it is configured locally (ADR 0011).
+	ConfigVersion int `json:"config_version,omitempty"`
 }
 
 // AdapterStatusFrame is published on platform.adapter.status.<adapter_id>.

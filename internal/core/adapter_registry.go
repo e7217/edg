@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -664,12 +665,53 @@ const (
 	// for expiry (which never reads adapter time) but it makes any timestamp
 	// the adapter puts on telemetry suspect.
 	DriftClockSkew = "clock_skew"
+	// DriftConfigStale: an adapter provisioned from master data is running a
+	// different point-list version than the one declared. It is polling the
+	// wrong registers, or none that were added (ADR 0011).
+	DriftConfigStale = "config_stale"
 )
 
 // driftClockSkewThreshold is when skew stops being noise. Telemetry timestamps
 // come from the adapter (see the SDK's PublishAssetData), so a minute of skew
 // is enough to misorder data in VictoriaMetrics.
 const driftClockSkewThreshold = 60.0
+
+// ConfigDrift compares the point-list version each provisioned adapter reports
+// for each asset with declared, the current version per asset (absent means
+// the list was deleted). Adapters that report 0 are configured locally and are
+// not compared.
+func (r *AdapterRegistry) ConfigDrift(declared map[string]int) []AdapterDriftIssue {
+	issues := []AdapterDriftIssue{}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for id, e := range r.entries {
+		if e.Availability != AvailabilityOnline {
+			continue // a dead adapter's last word is not a configuration
+		}
+		for _, a := range e.Assets {
+			if a.ConfigVersion == 0 {
+				continue
+			}
+			want, ok := declared[a.AssetID]
+			if ok && want == a.ConfigVersion {
+				continue
+			}
+			detail := fmt.Sprintf("running point list v%d, declared v%d", a.ConfigVersion, want)
+			if !ok {
+				detail = fmt.Sprintf("running point list v%d, but no list is declared any more", a.ConfigVersion)
+			}
+			issues = append(issues, AdapterDriftIssue{
+				Kind:     DriftConfigStale,
+				Severity: "warning",
+				Subject:  a.AssetID,
+				Detail:   detail,
+				Adapters: []string{id},
+			})
+		}
+	}
+	sort.Slice(issues, func(i, j int) bool { return issues[i].Subject < issues[j].Subject })
+	return issues
+}
 
 // AdapterDriftReport mirrors the shape of ConstraintsReport so operators and
 // the UI can treat the two the same way.

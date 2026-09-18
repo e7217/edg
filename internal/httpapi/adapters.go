@@ -58,7 +58,21 @@ func (s *Server) handleAdapter(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAdapterDrift(w http.ResponseWriter, r *http.Request) {
-	writeResponse(w, http.StatusOK, s.options.Adapters.Drift())
+	report := s.options.Adapters.Drift()
+	// Convergence needs master data, which the registry deliberately does not
+	// hold; the declared versions are read here and handed to it.
+	lists, err := s.store.ListPointLists()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	declared := make(map[string]int, len(lists))
+	for _, pl := range lists {
+		declared[pl.AssetID] = pl.Version
+	}
+	report.Issues = append(report.Issues, s.options.Adapters.ConfigDrift(declared)...)
+	report.IssueCount = len(report.Issues)
+	writeResponse(w, http.StatusOK, report)
 }
 
 // handleAssetAdapters answers "who is collecting this asset". More than one is

@@ -72,6 +72,8 @@ var (
 		"platform.meta.relation.list",
 		"platform.meta.template.list",
 		"platform.meta.constraints.check",
+		// An adapter provisions itself from its asset's point list (ADR 0011).
+		"platform.meta.points.get",
 	}
 
 	// metaWritePublish are the request/reply subjects that mutate master data.

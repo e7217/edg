@@ -15,6 +15,10 @@ const (
 	SubjectAssetDelete  = "platform.meta.asset.delete"
 	SubjectTemplateList = "platform.meta.template.list"
 
+	// Point provisioning (ADR 0011).
+	SubjectPointsGet     = "platform.meta.points.get"
+	SubjectPointsChanged = "platform.meta.points.changed"
+
 	// Asset relation request/reply.
 	SubjectRelationCreate = "platform.meta.relation.create"
 	SubjectRelationGet    = "platform.meta.relation.get"

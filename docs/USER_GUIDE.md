@@ -588,10 +588,16 @@ provisioned.
   missed bump is worse than a redundant one.
 - **`created_at` is preserved per point** across a re-import, so after bulk
   re-importing a spreadsheet you can still see which declarations are new.
-- **Adapters do not read these lists yet.** They still load their own
-  `mapping.yaml`. Declaring points centrally today gives you the inventory, the
-  backup and the review; distribution is the next phase. Until then a point list
-  and an adapter's actual configuration can disagree, and nothing detects it.
+- **Adapters can poll these lists directly** ([ADR 0011](adr/0011-point-distribution.md)).
+  An adapter built with the SDK's `RunProvisioned` / `run_provisioned` fetches
+  its asset's list at boot and rebuilds itself when the list changes — one
+  device reconnect per change. The reference Modbus adapters do this when their
+  local config names an `asset_id` and no `registers`; see the
+  [adapter guide](ADAPTER_GUIDE.md#modbus-tcp-reference-adapter).
+- **Drift is reported.** `GET /api/v1/adapters/drift` lists `config_stale` for
+  any online adapter running a list version other than the declared one. An
+  adapter still configured from its own `mapping.yaml` reports version 0 and is
+  not compared.
 - **Nothing marks a point writable.** Control is not implemented — neither SDK
   can receive a command — so a `writable` flag would be a field with no readers
   that made the gateway look like it can write to a PLC when it cannot.

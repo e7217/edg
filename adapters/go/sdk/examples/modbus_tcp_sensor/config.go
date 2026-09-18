@@ -16,6 +16,20 @@ type ModbusConfig struct {
 	PollInterval float64        `yaml:"poll_interval"`
 	Timeout      float64        `yaml:"timeout"`
 	Registers    []RegisterSpec `yaml:"registers"`
+
+	// AssetID, when set without registers, makes the register map come from
+	// EDG master data: the adapter polls the point list declared for this
+	// asset and follows changes to it (ADR 0011). The device connection above
+	// stays local, because it is a fact about this box's network.
+	AssetID string `yaml:"asset_id"`
+	// NATSURL is EDG Core's NATS address, credentials included. Empty uses
+	// nats://localhost:4222; EDG_NATS_URL overrides it.
+	NATSURL string `yaml:"nats_url"`
+}
+
+// Provisioned reports whether registers come from master data.
+func (c *ModbusConfig) Provisioned() bool {
+	return c.AssetID != "" && len(c.Registers) == 0
 }
 
 var (
@@ -57,8 +71,8 @@ func LoadConfig(path string) (*ModbusConfig, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 1.0
 	}
-	if len(cfg.Registers) == 0 {
-		return nil, fmt.Errorf("'registers' must list at least one entry")
+	if len(cfg.Registers) == 0 && cfg.AssetID == "" {
+		return nil, fmt.Errorf("'registers' must list at least one entry, or 'asset_id' must name an asset whose point list to poll")
 	}
 
 	for i := range cfg.Registers {

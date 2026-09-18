@@ -10,7 +10,7 @@ state with metadata request subjects when they start.
 | --- | --- | --- | --- |
 | `platform.meta.asset.changed` | Asset | Asset create, update, delete | `core` only |
 | `platform.meta.relation.changed` | Asset relation | Relation create and delete | `core` only |
-| `platform.meta.points.changed` | Asset point list | Point list create, replace, delete. `entity_id` is the asset id; `before`/`after` are whole point lists | `core` only |
+| `platform.meta.points.changed` | Asset point list | Point list create, replace, delete. `entity_id` is the asset id; `before`/`after` are whole point lists. Adapters that provision from master data rebuild on it ([ADR 0011](adr/0011-point-distribution.md)) | `core` only |
 
 These are plain NATS publishes, not JetStream writes. A subscriber that is not
 connected can miss events.

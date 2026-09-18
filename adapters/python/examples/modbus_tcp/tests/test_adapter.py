@@ -145,3 +145,13 @@ async def test_adapter_reads_and_decodes_registers() -> None:
     assert by_name["temperature"].unit == "°C"
     assert by_name["pressure"].number == pytest.approx(3.14, rel=1e-4)
     assert by_name["status"].number == -1.0
+
+
+def test_adapter_keeps_the_sdk_nats_client():
+    """The example once stored its Modbus client in BaseAdapter's _client
+    attribute, replacing the NATS connection; start() then failed before
+    reading a single register."""
+    from sdk.client import NATSClientWrapper
+
+    adapter = ModbusTCPAdapter(config=ModbusConfig(host="127.0.0.1"), asset_id="x")
+    assert isinstance(adapter._client, NATSClientWrapper)
