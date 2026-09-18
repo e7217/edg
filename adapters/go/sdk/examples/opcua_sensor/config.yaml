@@ -1,0 +1,23 @@
+# Sample OPC UA adapter configuration.
+#
+# The server connection is local to this box. What to read is either listed
+# under `nodes`, or -- with `asset_id` set and no `nodes` -- taken from the
+# point list EDG declares for that asset (each point's address is a NodeId).
+
+endpoint: opc.tcp://127.0.0.1:4840
+# username: operator
+# password: secret
+poll_interval: 1.0   # seconds
+timeout: 5.0         # seconds, per request
+
+nodes:
+  - name: temperature
+    node_id: "ns=2;s=Temperature"
+    unit: "°C"
+  - name: running
+    node_id: "ns=2;s=Running"
+  - name: state
+    node_id: "ns=2;s=State"
+
+# asset_id: press-01
+# nats_url: nats://adapter:SECRET@edg-core:4222   # or EDG_NATS_URL

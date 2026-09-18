@@ -220,6 +220,12 @@ jobs:
           go build ./...
           go test ./... -race
 
+      - name: Build OPC UA reference adapter example
+        working-directory: adapters/go/sdk/examples/opcua_sensor
+        run: |
+          go build ./...
+          go test ./... -race
+
   go-version-lockstep:
     name: Go version lockstep
     runs-on: ubuntu-latest
@@ -230,7 +236,7 @@ jobs:
       - name: Assert every module declares the CI toolchain version
         run: |
           fail=0
-          for mod in go.mod adapters/go/sdk/go.mod adapters/go/sdk/examples/modbus_tcp_sensor/go.mod; do
+          for mod in go.mod adapters/go/sdk/go.mod adapters/go/sdk/examples/modbus_tcp_sensor/go.mod adapters/go/sdk/examples/opcua_sensor/go.mod; do
             declared=$(awk '/^go /{print $2; exit}' "$mod")
             if [ "$declared" != "${GO_VERSION}" ]; then
               echo "::error file=$mod::go directive is $declared, expected ${GO_VERSION} (see .github/workflows/test.yml env.GO_VERSION)"
