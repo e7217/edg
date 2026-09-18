@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/e7217/edg/compare/v0.1.0...v0.2.0) (2026-09-18)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** messages with a seconds timestamp, an empty asset_id, or no values no longer reach platform.data.validated; values whose type or unit disagrees with their declaration are dropped. Set data_contract.mode: warn to keep the old behaviour while fixing adapters.
+
+### Features
+
+* **adapters:** MELSEC MC protocol reference adapter ([#144](https://github.com/e7217/edg/issues/144)) ([968df14](https://github.com/e7217/edg/commit/968df142ea7a0c88d4f2151314e0580128156b34))
+* **adapters:** Modbus RTU over serial in the Go reference adapter ([#143](https://github.com/e7217/edg/issues/143)) ([0d403e1](https://github.com/e7217/edg/commit/0d403e124e6ff32aaec18828ec2cc937e235b920))
+* **adapters:** OPC UA reference adapter, provisioned from master data ([#142](https://github.com/e7217/edg/issues/142)) ([7eed94c](https://github.com/e7217/edg/commit/7eed94c2dd25705de8b679b467792d5485c3f2b2))
+* **core:** enforce a data contract on platform.data.validated (ADR 0010) ([#136](https://github.com/e7217/edg/issues/136)) ([6aef379](https://github.com/e7217/edg/commit/6aef379981f2503790d40f76a345543600efe9bf))
+* **core:** let an operator choose an asset id ([#129](https://github.com/e7217/edg/issues/129)) ([#132](https://github.com/e7217/edg/issues/132)) ([472ece4](https://github.com/e7217/edg/commit/472ece441237407a84ac89992bdcbabd3e8ffe40))
+* **core:** plant bundles -- whole-plant export, spreadsheet import, dry run ([#140](https://github.com/e7217/edg/issues/140)) ([748ebaf](https://github.com/e7217/edg/commit/748ebaf013a4694ac27b2c8f77b4fc4cc4947afd))
+* **core:** point provisioning as master data (P2 phase 1) ([#131](https://github.com/e7217/edg/issues/131)) ([29c0ce5](https://github.com/e7217/edg/commit/29c0ce5dbd59087e06d07145fab692a47d9ff095))
+* distribute point lists to adapters (P2 phase 2, ADR 0011) ([#139](https://github.com/e7217/edg/issues/139)) ([f3668ac](https://github.com/e7217/edg/commit/f3668ac0b3beeb501b15b2b3634ae2e6e69dd7cb))
+
+
+### Bug Fixes
+
+* **ci:** attach release assets to the tag, not to refs/heads/main ([#126](https://github.com/e7217/edg/issues/126)) ([20b21d1](https://github.com/e7217/edg/commit/20b21d1876d3785a6e99f4a2f4851b83e59f3175)), closes [#117](https://github.com/e7217/edg/issues/117)
+* **ci:** build release artifacts from release-please, not a tag trigger ([#124](https://github.com/e7217/edg/issues/124)) ([e34ce3d](https://github.com/e7217/edg/commit/e34ce3daf37957dbc7f963efd1427e90bf7bfa88))
+* **ci:** upload release assets with gh, which infers nothing ([#127](https://github.com/e7217/edg/issues/127)) ([217d73d](https://github.com/e7217/edg/commit/217d73d3defb394c8eb47a04270fb7b8f4145a42)), closes [#117](https://github.com/e7217/edg/issues/117)
+* **core:** delete the PoC buffer that retained every message ever received ([#128](https://github.com/e7217/edg/issues/128)) ([eb9d74f](https://github.com/e7217/edg/commit/eb9d74f310a93b3364870a7e8405de3f10a9bd90)), closes [#115](https://github.com/e7217/edg/issues/115)
+* **httpapi:** keep the operator UI reachable when a token is configured ([#107](https://github.com/e7217/edg/issues/107)) ([#138](https://github.com/e7217/edg/issues/138)) ([26bf519](https://github.com/e7217/edg/commit/26bf519f3a6e3de6003ada56a944a4cafda9d139))
+* **sink:** store each reading once and resume promptly after a restart, verified end to end ([#137](https://github.com/e7217/edg/issues/137)) ([97c6955](https://github.com/e7217/edg/commit/97c6955cf257cbf484caaffc6d13e3d4546f3234))
+
+
+### Performance Improvements
+
+* capacity baseline, and two ingest-path fixes it found ([#141](https://github.com/e7217/edg/issues/141)) ([961c7a2](https://github.com/e7217/edg/commit/961c7a2d32d88540eea023dd4b17664cb10edbe9)), closes [#76](https://github.com/e7217/edg/issues/76)
+
 ## 0.1.0 (2026-09-10)
 
 
