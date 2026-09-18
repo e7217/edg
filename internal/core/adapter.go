@@ -127,6 +127,11 @@ type AdapterAssetStatus struct {
 	CollectErrorsTotal int64      `json:"collect_errors_total"`
 	LastError          string     `json:"last_error,omitempty"`
 	LastErrorAt        *time.Time `json:"last_error_at,omitempty"`
+	// ConfigVersion is the version of this asset's point list the adapter is
+	// running (ADR 0011). Zero means the adapter does not take its points
+	// from master data, which is not drift: it is a locally configured
+	// adapter.
+	ConfigVersion int `json:"config_version,omitempty"`
 }
 
 // AdapterStatusFrame is what an adapter publishes on
@@ -168,8 +173,9 @@ type AdapterStatusFrame struct {
 
 	// Capabilities gates future features (e.g. "ping") without a schema bump.
 	Capabilities []string `json:"capabilities,omitempty"`
-	// ConfigVersion is always 0 in this phase. Reserved for the declaration
-	// layer's desired-vs-applied convergence check.
+	// ConfigVersion is the applied point-list version of a single-asset
+	// adapter, 0 for one configured locally. The per-asset field in Assets is
+	// what the convergence check reads (ADR 0011).
 	ConfigVersion int `json:"config_version"`
 
 	Assets          []AdapterAssetStatus `json:"assets,omitempty"`

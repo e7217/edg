@@ -17,6 +17,10 @@ const (
 	SubjectAssetDelete      = "platform.meta.asset.delete"
 	SubjectTemplateList     = "platform.meta.template.list"
 	SubjectConstraintsCheck = "platform.meta.constraints.check"
+	// SubjectPointsGet returns one asset's point list. It is how an adapter
+	// provisions itself at boot and after platform.meta.points.changed
+	// (ADR 0011).
+	SubjectPointsGet = "platform.meta.points.get"
 
 	// Relation subjects
 	SubjectRelationCreate = "platform.meta.relation.create"
@@ -89,6 +93,7 @@ func (h *MetaHandler) handlers() map[string]nats.MsgHandler {
 		SubjectAssetDelete:      h.handleAssetDelete,
 		SubjectTemplateList:     h.handleTemplateList,
 		SubjectConstraintsCheck: h.handleConstraintsCheck,
+		SubjectPointsGet:        h.handlePointsGet,
 
 		// Relation handlers
 		SubjectRelationCreate: h.handleRelationCreate,
@@ -295,6 +300,28 @@ func (h *MetaHandler) handleAssetDelete(msg *nats.Msg) {
 
 	log.Printf("[Meta] Asset deleted: %s", req.ID)
 	h.reply(msg, Response{Success: true})
+}
+
+// PointsGetRequest asks for one asset's point list.
+type PointsGetRequest struct {
+	AssetID string `json:"asset_id"`
+}
+
+// handlePointsGet answers with the asset's point list. A declared asset with
+// no list gets an empty list at version 0, not an error: "nothing to poll" is a
+// state an adapter must be able to converge on.
+func (h *MetaHandler) handlePointsGet(msg *nats.Msg) {
+	var req PointsGetRequest
+	if err := json.Unmarshal(msg.Data, &req); err != nil {
+		h.reply(msg, Response{Success: false, Error: "invalid request format"})
+		return
+	}
+	pl, err := h.service.GetPointList(req.AssetID)
+	if err != nil {
+		h.reply(msg, Response{Success: false, Error: err.Error()})
+		return
+	}
+	h.reply(msg, Response{Success: true, Data: pl})
 }
 
 func (h *MetaHandler) handleTemplateList(msg *nats.Msg) {

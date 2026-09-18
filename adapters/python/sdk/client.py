@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import nats
 
 from .exceptions import ConnectionError, ForbiddenError, PublishError
-from .models import AssetData, AssetRelation
+from .models import AssetData, AssetRelation, PointList
 
 if TYPE_CHECKING:
     from nats.aio.client import Client as NATSClient
@@ -57,6 +57,10 @@ SUBJECT_RELATION_CREATE = "platform.meta.relation.create"
 SUBJECT_RELATION_GET = "platform.meta.relation.get"
 SUBJECT_RELATION_LIST = "platform.meta.relation.list"
 SUBJECT_RELATION_DELETE = "platform.meta.relation.delete"
+
+# Point provisioning (ADR 0011).
+SUBJECT_POINTS_GET = "platform.meta.points.get"
+SUBJECT_POINTS_CHANGED = "platform.meta.points.changed"
 
 
 class NATSClientWrapper:
@@ -401,3 +405,32 @@ class NATSClientWrapper:
             raise
         except Exception as e:
             raise PublishError(f"Delete relation failed: {e}") from e
+
+    async def get_point_list(self, asset_id: str) -> PointList | None:
+        """Fetch an asset's point list (ADR 0011).
+
+        Returns:
+            The list. A declared asset with nothing declared yields an empty
+            list at version 0. None if the asset is not declared.
+
+        Raises:
+            PublishError: When the request fails
+        """
+        if not self.is_connected:
+            raise PublishError("NATS not connected")
+        try:
+            payload = json.dumps({"asset_id": asset_id}).encode()
+            response = await self._request(SUBJECT_POINTS_GET, payload)
+            result = json.loads(response.data.decode())
+            if not result.get("success"):
+                error = result.get("error", "")
+                if "not found" in error:
+                    return None
+                raise PublishError(f"Get point list failed: {error}")
+            return PointList.from_dict(result.get("data") or {"asset_id": asset_id})
+        except ForbiddenError:
+            raise
+        except PublishError:
+            raise
+        except Exception as e:
+            raise PublishError(f"Get point list failed: {e}") from e

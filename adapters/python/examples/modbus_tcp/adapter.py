@@ -35,29 +35,32 @@ class ModbusTCPAdapter(BaseAdapter):
     def __init__(self, config: ModbusConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._cfg = config
-        self._client: AsyncModbusTcpClient | None = None
+        # Not self._client: BaseAdapter keeps its NATS connection there, and
+        # overwriting it made start() fail with "'NoneType' object has no
+        # attribute 'connect'" before any register was read.
+        self._modbus: AsyncModbusTcpClient | None = None
 
     async def connect_device(self) -> None:
-        self._client = AsyncModbusTcpClient(
+        self._modbus = AsyncModbusTcpClient(
             host=self._cfg.host,
             port=self._cfg.port,
             timeout=self._cfg.timeout,
         )
-        ok = await self._client.connect()
-        if not ok or not self._client.connected:
+        ok = await self._modbus.connect()
+        if not ok or not self._modbus.connected:
             raise DeviceConnectionError(
                 f"failed to connect to modbus://{self._cfg.host}:{self._cfg.port}"
             )
 
     async def disconnect_device(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+        if self._modbus is not None:
+            self._modbus.close()
+            self._modbus = None
 
     async def check_device_health(self) -> None:
         # Use the first register as a cheap ping. If the device dropped,
         # this read will fail and the SDK reconnect path takes over.
-        if self._client is None or not self._client.connected:
+        if self._modbus is None or not self._modbus.connected:
             raise DeviceConnectionError("modbus client not connected")
         first = self._cfg.registers[0]
         try:
@@ -75,19 +78,19 @@ class ModbusTCPAdapter(BaseAdapter):
         return values
 
     async def _read_words(self, spec: RegisterSpec) -> list[int]:
-        if self._client is None:
+        if self._modbus is None:
             raise DeviceConnectionError("modbus client not initialized")
 
         count = spec.word_count
         try:
             if spec.function == "holding":
-                resp = await self._client.read_holding_registers(
+                resp = await self._modbus.read_holding_registers(
                     address=spec.address,
                     count=count,
                     device_id=self._cfg.unit_id,
                 )
             elif spec.function == "input":
-                resp = await self._client.read_input_registers(
+                resp = await self._modbus.read_input_registers(
                     address=spec.address,
                     count=count,
                     device_id=self._cfg.unit_id,

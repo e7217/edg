@@ -36,6 +36,16 @@ class ModbusConfig:
     poll_interval: float = 1.0
     timeout: float = 1.0
     registers: list[RegisterSpec] = field(default_factory=list)
+    # With asset_id set and no registers, the register map is the point list
+    # EDG declares for that asset (ADR 0011). The device connection above
+    # stays local: it is a fact about this box's network.
+    asset_id: str = ""
+    # EDG Core's NATS address, credentials included. EDG_NATS_URL overrides it.
+    nats_url: str = "nats://localhost:4222"
+
+    @property
+    def provisioned(self) -> bool:
+        return bool(self.asset_id) and not self.registers
 
 
 def load_config(path: str | Path) -> ModbusConfig:
@@ -53,9 +63,15 @@ def load_config(path: str | Path) -> ModbusConfig:
     if "host" not in raw:
         raise ConfigError("'host' is required")
 
+    asset_id = str(raw.get("asset_id") or "")
     registers_raw = raw.get("registers")
-    if not isinstance(registers_raw, list) or not registers_raw:
-        raise ConfigError("'registers' must list at least one entry")
+    if registers_raw is None and asset_id:
+        registers_raw = []
+    elif not isinstance(registers_raw, list) or not registers_raw:
+        raise ConfigError(
+            "'registers' must list at least one entry, "
+            "or 'asset_id' must name an asset whose point list to poll"
+        )
 
     registers = [_parse_register(i, item) for i, item in enumerate(registers_raw)]
 
@@ -66,7 +82,57 @@ def load_config(path: str | Path) -> ModbusConfig:
         poll_interval=float(raw.get("poll_interval", 1.0)),
         timeout=float(raw.get("timeout", 1.0)),
         registers=registers,
+        asset_id=asset_id,
+        nats_url=str(raw.get("nats_url") or "nats://localhost:4222"),
     )
+
+
+PROTOCOL_MODBUS_TCP = "modbus-tcp"
+
+
+def registers_from_points(point_list: Any) -> list[RegisterSpec]:
+    """Turn a declared point list into a register map.
+
+    The point's address is the register number and its encoding carries what
+    a mapping.yaml register carries: function, type, word_order and scale.
+    One bad point rejects the whole list rather than being skipped: a register
+    map with a hole in it polls successfully and reports nothing about the hole.
+    """
+    if point_list.protocol and point_list.protocol != PROTOCOL_MODBUS_TCP:
+        raise ConfigError(
+            f"point list protocol is {point_list.protocol!r}; "
+            f"this adapter reads {PROTOCOL_MODBUS_TCP!r}"
+        )
+    registers = []
+    for index, point in enumerate(point_list.enabled_points()):
+        try:
+            address = int(point.address)
+        except ValueError:
+            raise ConfigError(
+                f"point {point.name!r}: address {point.address!r} is not a register number"
+            ) from None
+        encoding = point.encoding or {}
+        if "type" not in encoding:
+            raise ConfigError(f"point {point.name!r}: encoding.type is required")
+        scale = encoding.get("scale", 1.0)
+        if isinstance(scale, bool) or not isinstance(scale, (int, float)):
+            raise ConfigError(f"point {point.name!r}: encoding.scale must be a number")
+        item = {
+            "name": point.name,
+            "function": encoding.get("function", "holding"),
+            "address": address,
+            "type": encoding["type"],
+            "word_order": encoding.get("word_order", "ABCD"),
+            "scale": scale,
+            "unit": point.unit,
+        }
+        try:
+            registers.append(_parse_register(index, item))
+        except ConfigError as e:
+            raise ConfigError(f"point {point.name!r}: {e}") from None
+        if not 0 <= address <= 0xFFFF:
+            raise ConfigError(f"point {point.name!r}: address {address} is out of range")
+    return registers
 
 
 def _parse_register(index: int, item: Any) -> RegisterSpec:

@@ -5,6 +5,10 @@
 //
 // The adapter reads each configured register over Modbus TCP and
 // publishes the decoded values to EDG Core via NATS.
+//
+// With asset_id set and no registers, the register map is the point list EDG
+// declares for that asset, and the adapter rebuilds itself when it changes
+// (ADR 0011).
 package main
 
 import (
@@ -30,22 +34,40 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config %s: %v", cfgPath, err)
 	}
+	if url := os.Getenv("EDG_NATS_URL"); url != "" {
+		cfg.NATSURL = url
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	dev := NewModbusDevice(cfg)
-	a := sdk.NewAdapter(sdk.AdapterConfig{
+	acfg := sdk.AdapterConfig{
 		AssetID:         fmt.Sprintf("modbus-%s-%d", cfg.Host, cfg.UnitID),
+		NATSURL:         cfg.NATSURL,
 		CollectInterval: time.Duration(cfg.PollInterval * float64(time.Second)),
+		AdapterVersion:  "modbus-tcp-example",
 		Metadata: map[string]string{
-			"protocol": "modbus-tcp",
+			"protocol": ProtocolModbusTCP,
 			"host":     cfg.Host,
 			"unit_id":  fmt.Sprintf("%d", cfg.UnitID),
 		},
-	}, dev)
+	}
 
-	if err := a.Run(ctx); err != nil {
+	if cfg.Provisioned() {
+		acfg.AssetID = cfg.AssetID
+		err = sdk.RunProvisioned(ctx, sdk.ProvisionedConfig{Adapter: acfg}, func(pl *sdk.PointList) (sdk.Collector, error) {
+			regs, err := registersFromPoints(pl)
+			if err != nil {
+				return nil, err
+			}
+			device := *cfg
+			device.Registers = regs
+			return NewModbusDevice(&device), nil
+		})
+	} else {
+		err = sdk.NewAdapter(acfg, NewModbusDevice(cfg)).Run(ctx)
+	}
+	if err != nil {
 		log.Fatalf("adapter exited: %v", err)
 	}
 }

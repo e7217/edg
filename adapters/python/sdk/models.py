@@ -140,3 +140,56 @@ class AssetRelation:
             result["metadata"] = self.metadata
 
         return result
+
+
+@dataclass
+class Point:
+    """One declared reading (ADR 0011). Mirrors internal/core/points.go.
+
+    address and encoding are opaque to core; only the adapter that speaks the
+    protocol interprets them. encoding keeps JSON types, so a numeric scale
+    arrives as a number.
+    """
+
+    name: str
+    value_type: str
+    address: str = ""
+    unit: str = ""
+    encoding: dict[str, Any] = field(default_factory=dict)
+    enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Point":
+        return cls(
+            name=data["name"],
+            value_type=data.get("value_type", ""),
+            address=data.get("address", ""),
+            unit=data.get("unit", ""),
+            encoding=dict(data.get("encoding") or {}),
+            enabled=bool(data.get("enabled", True)),
+        )
+
+
+@dataclass
+class PointList:
+    """Every point declared for one asset."""
+
+    asset_id: str
+    protocol: str = ""
+    version: int = 0
+    poll_interval_ms: int = 0
+    points: list[Point] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PointList":
+        return cls(
+            asset_id=data.get("asset_id", ""),
+            protocol=data.get("protocol", ""),
+            version=int(data.get("version", 0)),
+            poll_interval_ms=int(data.get("poll_interval_ms", 0) or 0),
+            points=[Point.from_dict(p) for p in data.get("points") or []],
+        )
+
+    def enabled_points(self) -> list[Point]:
+        """The points to poll. A disabled point stays declared but is not read."""
+        return [p for p in self.points if p.enabled]

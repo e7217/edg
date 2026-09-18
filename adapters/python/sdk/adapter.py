@@ -46,6 +46,7 @@ class BaseAdapter(ABC):
         heartbeat_interval: float = 10.0,
         disable_status_reporting: bool = False,
         report_host: bool = False,
+        config_version: int = 0,
     ):
         """
         Args:
@@ -66,6 +67,9 @@ class BaseAdapter(ABC):
             report_host: Include hostname and PID in status frames. Off by
                 default: that inventory is more sensitive than the asset list
                 and the plane carries no authorization of its own.
+            config_version: Version of the point list this adapter was built
+                from, reported so core can tell whether it has converged
+                (ADR 0011). run_provisioned sets it; leave 0 otherwise.
         """
         self.asset_id = asset_id
         self.nats_url = nats_url
@@ -92,6 +96,7 @@ class BaseAdapter(ABC):
         self._heartbeat_interval = heartbeat_interval
         self._disable_status_reporting = disable_status_reporting
         self._report_host = report_host
+        self.config_version = config_version
         self._status: StatusReporter | None = None
         self._stop_task: asyncio.Task[Any] | None = None
 
@@ -324,6 +329,7 @@ class BaseAdapter(ABC):
                 adapter_version=self._adapter_version,
                 heartbeat_interval=self._heartbeat_interval,
                 report_host=self._report_host,
+                config_version=self.config_version,
             )
             await self._status.start()
 

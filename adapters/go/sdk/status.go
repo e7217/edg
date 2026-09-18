@@ -282,6 +282,7 @@ func (r *statusReporter) frame(phase string) AdapterStatusFrame {
 		CollectErrorsTotal: counters.CollectErrorsTotal,
 		LastError:          lastError,
 		LastErrorAt:        lastErrorAt,
+		ConfigVersion:      r.cfg.ConfigVersion,
 	}}
 
 	frame := AdapterStatusFrame{
@@ -299,6 +300,7 @@ func (r *statusReporter) frame(phase string) AdapterStatusFrame {
 		SDK:                SDKVersion,
 		AdapterVersion:     r.cfg.AdapterVersion,
 		Capabilities:       []string{"ping"},
+		ConfigVersion:      r.cfg.ConfigVersion,
 		Assets:             assets,
 		DeviceCounts:       map[string]int{string(deviceState): 1},
 		Counters:           counters,

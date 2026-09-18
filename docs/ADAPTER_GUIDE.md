@@ -106,6 +106,53 @@ The reference adapters delegate the wire-level protocol work to permissively lic
 - Python: [`pymodbus`](https://github.com/pymodbus-dev/pymodbus) (BSD-3-Clause)
 - Go: [`goburrow/modbus`](https://github.com/goburrow/modbus) (BSD-3-Clause)
 
+### Registers from master data
+
+Instead of listing `registers`, name the asset whose point list the adapter
+should poll ([ADR 0011](adr/0011-point-distribution.md)). The device connection
+stays local; the register map comes from EDG and follows it when it changes:
+
+```yaml
+host: 192.168.10.21      # this box's view of the device
+port: 502
+unit_id: 1
+asset_id: pump-a         # poll the point list declared for pump-a
+nats_url: nats://adapter:SECRET@edg-core:4222   # or EDG_NATS_URL
+```
+
+Each point maps to a register: `address` is the register number, and
+`encoding` carries what a mapping row carries:
+
+```yaml
+# declared in EDG for pump-a (edg-core -import-points, or PUT /api/v1/assets/pump-a/points)
+protocol: modbus-tcp
+poll_interval_ms: 1000
+points:
+  - name: temperature
+    value_type: NUMBER
+    unit: "°C"
+    address: "0"
+    encoding: {function: holding, type: int16, scale: 0.1}
+```
+
+One invalid point rejects the whole list — a register map with a hole in it
+polls successfully and says nothing about the hole. The adapter then keeps
+heartbeating, collects nothing, logs why, and picks up the next version.
+
+Your own adapter gets the same behaviour from the SDK:
+
+```go
+err := sdk.RunProvisioned(ctx, sdk.ProvisionedConfig{
+    Adapter: sdk.AdapterConfig{AssetID: "pump-a", NATSURL: url},
+}, func(pl *sdk.PointList) (sdk.Collector, error) {
+    return newCollector(pl.EnabledPoints()) // called once per list version
+})
+```
+
+```python
+await run_provisioned("pump-a", lambda pl: MyAdapter(pl, asset_id="pump-a"), nats_url=url)
+```
+
 Modbus RTU (serial), write function codes, and multi-unit deployments are intentionally out of scope for these references; copy the example and extend as needed.
 
 ## Metadata Change Events

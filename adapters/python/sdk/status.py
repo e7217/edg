@@ -114,6 +114,9 @@ class StatusReporter:
     adapter_version: str = ""
     heartbeat_interval: float = DEFAULT_HEARTBEAT_INTERVAL
     report_host: bool = False
+    # Version of the asset's point list this adapter runs; 0 when configured
+    # locally (ADR 0011).
+    config_version: int = 0
 
     counters: AdapterCounters = field(default_factory=AdapterCounters)
     _seq: int = 0
@@ -287,6 +290,8 @@ class StatusReporter:
         if self._last_error:
             asset["last_error"] = self._last_error
             asset["last_error_at"] = self._last_error_at
+        if self.config_version:
+            asset["config_version"] = self.config_version
 
         frame: dict = {
             "schema_version": ADAPTER_SCHEMA_VERSION,
@@ -304,7 +309,7 @@ class StatusReporter:
             "sent_at": _now_iso(),
             "sdk": SDK_VERSION,
             "capabilities": ["ping"],
-            "config_version": 0,
+            "config_version": self.config_version,
             "assets": [asset],
             "device_counts": {self._device_state: 1},
             "counters": self.counters.to_dict(),

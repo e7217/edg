@@ -158,3 +158,59 @@ def test_unknown_version(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError, match="version"):
         load_config(path)
+
+
+# --- point provisioning (ADR 0011) ---
+
+from sdk.models import Point, PointList  # noqa: E402
+
+from modbus_tcp.config import registers_from_points  # noqa: E402
+
+
+def test_asset_id_without_registers_is_provisioned(tmp_path):
+    path = tmp_path / "m.yaml"
+    path.write_text("host: 10.0.0.5\nasset_id: pump-a\nnats_url: nats://core:4222\n")
+    cfg = load_config(path)
+    assert cfg.provisioned
+    assert cfg.asset_id == "pump-a"
+    assert cfg.nats_url == "nats://core:4222"
+
+
+def test_registers_from_points():
+    pl = PointList(
+        asset_id="pump-a",
+        protocol="modbus-tcp",
+        version=3,
+        points=[
+            Point(name="temperature", value_type="NUMBER", address="0", unit="°C",
+                  encoding={"function": "holding", "type": "int16", "scale": 0.1}),
+            Point(name="flow", value_type="NUMBER", address="100",
+                  encoding={"function": "input", "type": "float32", "word_order": "CDAB"}),
+            Point(name="retired", value_type="NUMBER", address="7",
+                  encoding={"type": "uint16"}, enabled=False),
+        ],
+    )
+    regs = registers_from_points(pl)
+    assert [r.name for r in regs] == ["temperature", "flow"], "a disabled point is not polled"
+    assert (regs[0].address, regs[0].type, regs[0].scale, regs[0].unit) == (0, "int16", 0.1, "°C")
+    assert (regs[1].function, regs[1].word_order, regs[1].scale) == ("input", "CDAB", 1.0)
+
+
+@pytest.mark.parametrize(
+    "point,message",
+    [
+        (Point(name="p", value_type="NUMBER", address="ns=2;s=T", encoding={"type": "int16"}), "not a register number"),
+        (Point(name="p", value_type="NUMBER", address="1"), "encoding.type is required"),
+        (Point(name="p", value_type="NUMBER", address="1", encoding={"type": "int16", "scale": "0.1"}), "must be a number"),
+        (Point(name="p", value_type="NUMBER", address="1", encoding={"type": "int64"}), "not supported"),
+    ],
+)
+def test_one_bad_point_rejects_the_list(point, message):
+    good = Point(name="ok", value_type="NUMBER", address="0", encoding={"type": "uint16"})
+    with pytest.raises(ConfigError, match=message):
+        registers_from_points(PointList(asset_id="a", points=[good, point]))
+
+
+def test_another_protocol_is_refused():
+    with pytest.raises(ConfigError, match="opcua"):
+        registers_from_points(PointList(asset_id="a", protocol="opcua"))

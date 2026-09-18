@@ -77,6 +77,12 @@ type AdapterConfig struct {
 	// this plane exists to solve.
 	DisableStatusReporting bool
 
+	// ConfigVersion is the version of the asset's point list this adapter was
+	// built from, reported in status frames so core can tell whether it has
+	// converged on the declared list (ADR 0011). RunProvisioned sets it; a
+	// locally configured adapter leaves it 0.
+	ConfigVersion int
+
 	// ReportHost includes the hostname and PID in status frames. Off by
 	// default because that inventory is more sensitive than the asset list and
 	// the plane carries no authorization of its own.
