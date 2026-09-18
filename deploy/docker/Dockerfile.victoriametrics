@@ -1,7 +1,8 @@
-FROM victoriametrics/victoria-metrics:v1.96.0
+FROM victoriametrics/victoria-metrics:v1.133.0
 
-# Pinned for reproducibility. Keep the version in THIRD_PARTY_LICENSES.md in
-# step with this line.
+# Pinned for reproducibility, and to the same version the release bundle ships
+# (VM_VERSION in .github/workflows/release.yml) and test/e2e runs against. The
+# two had drifted to v1.96.0 here and v1.133.0 in the bundle.
 
 # Scrape configuration for the built-in Prometheus-compatible scraper, enabled
 # by -promscrape.config in compose.yml (ADR 0009).

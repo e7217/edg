@@ -165,6 +165,7 @@ type VMSink struct {
 	batchMaxSize  int
 	flushInterval time.Duration
 	httpClient    *http.Client
+	ackWait       time.Duration
 	// consumerStatInterval throttles the ConsumerInfo round trip that feeds
 	// the backlog gauges. Injectable so tests do not have to wait real time.
 	consumerStatInterval time.Duration
@@ -206,6 +207,7 @@ func NewVMSink(js nats.JetStreamContext, subject string, cfg SinkConfig) (*VMSin
 		batchMaxSize:  cfg.BatchMaxSize,
 		flushInterval: cfg.FlushInterval,
 		httpClient:    &http.Client{Timeout: cfg.RequestTimeout},
+		ackWait:       sinkAckWait(cfg.RequestTimeout),
 
 		consumerStatInterval: statInterval,
 	}, nil
@@ -215,7 +217,13 @@ func NewVMSink(js nats.JetStreamContext, subject string, cfg SinkConfig) (*VMSin
 // runs until ctx is cancelled or Stop is called. The durable consumer is left
 // intact on stop so a restart resumes from the last acknowledged message.
 func (s *VMSink) Start(ctx context.Context) error {
-	sub, err := s.js.PullSubscribe(s.subject, s.consumerName)
+	stream, err := s.ensureConsumer()
+	if err != nil {
+		return err
+	}
+	// Bind rather than let PullSubscribe create the consumer: a bound
+	// subscription never deletes it, and the consumer's config is ours.
+	sub, err := s.js.PullSubscribe(s.subject, s.consumerName, nats.Bind(stream, s.consumerName))
 	if err != nil {
 		return fmt.Errorf("vm sink failed to subscribe: %w", err)
 	}
@@ -227,6 +235,72 @@ func (s *VMSink) Start(ctx context.Context) error {
 	go s.run(runCtx)
 	return nil
 }
+
+// sinkAckWait is how long a delivered message may stay unacknowledged before
+// JetStream redelivers it. A batch is acked or nakked within one write, which
+// request_timeout bounds, so twice that is ample. The JetStream default is 30s,
+// and that is how long a hard-killed core used to leave its last batch
+// stranded after a restart.
+func sinkAckWait(requestTimeout time.Duration) time.Duration {
+	wait := 2 * requestTimeout
+	if wait < minSinkAckWait {
+		wait = minSinkAckWait
+	}
+	return wait
+}
+
+const minSinkAckWait = 5 * time.Second
+
+// ensureConsumer creates the durable consumer, or brings an existing one's
+// AckWait in line with the configuration. It returns the stream name.
+func (s *VMSink) ensureConsumer() (string, error) {
+	stream, err := s.js.StreamNameBySubject(s.subject)
+	if err != nil {
+		return "", fmt.Errorf("vm sink: no stream captures %q: %w", s.subject, err)
+	}
+	info, err := s.js.ConsumerInfo(stream, s.consumerName)
+	switch {
+	case errors.Is(err, nats.ErrConsumerNotFound):
+		_, err = s.js.AddConsumer(stream, &nats.ConsumerConfig{
+			Durable:       s.consumerName,
+			AckPolicy:     nats.AckExplicitPolicy,
+			DeliverPolicy: nats.DeliverAllPolicy,
+			FilterSubject: s.subject,
+			AckWait:       s.ackWait,
+		})
+		if err != nil {
+			return "", fmt.Errorf("vm sink failed to create consumer: %w", err)
+		}
+	case err != nil:
+		return "", fmt.Errorf("vm sink failed to read consumer: %w", err)
+	case info.Config.AckWait != s.ackWait:
+		// A consumer created before sinkAckWait existed carries the 30s
+		// default. AckWait is one of the fields JetStream lets us edit.
+		cfg := info.Config
+		cfg.AckWait = s.ackWait
+		if _, err := s.js.UpdateConsumer(stream, &cfg); err != nil {
+			return "", fmt.Errorf("vm sink failed to update consumer ack wait: %w", err)
+		}
+	}
+	return stream, nil
+}
+
+// releaseBuffered naks whatever the subscription has already been handed but
+// the loop never saw. A Fetch can return before the rest of its batch arrives;
+// those messages sit in the client's buffer, and abandoning them at shutdown
+// strands them until AckWait. Naked, they are redelivered at once.
+func (s *VMSink) releaseBuffered() {
+	if s.sub == nil {
+		return
+	}
+	msgs, err := s.sub.Fetch(s.batchMaxSize, nats.MaxWait(releaseBufferedWait))
+	if err != nil && !errors.Is(err, nats.ErrTimeout) {
+		return
+	}
+	nakAll(msgs)
+}
+
+const releaseBufferedWait = 100 * time.Millisecond
 
 // Stop signals the drain loop to exit and waits for it. It intentionally does
 // not delete the durable consumer.
@@ -241,6 +315,7 @@ func (s *VMSink) run(ctx context.Context) {
 	defer s.wg.Done()
 	sinkUp.Set(1)
 	defer sinkUp.Set(0)
+	defer s.releaseBuffered()
 
 	// Consumer state comes from a NATS round trip, so it is refreshed on this
 	// loop rather than at scrape time -- a scraper must never be able to put

@@ -35,7 +35,20 @@ This script will:
 2. Download and setup VictoriaMetrics (if not installed)
 3. Start all services
 4. Publish test sensor data
-5. Verify data flow to VictoriaMetrics
+5. Check that VictoriaMetrics stored exactly the samples that were published
+
+### End-to-End Storage Test
+
+`test_pipeline.sh` leaves a stack running to explore. To *verify* storage, run
+the real binary against a real VictoriaMetrics (Docker required):
+
+```bash
+./scripts/e2e-storage.sh
+```
+
+It compares every stored sample -- count, value, timestamp, labels -- for the
+data contract cases, a 1,000-message run, a storage outage, a core restart with
+a backlog, and a redelivered reading. CI runs it on every push.
 
 ### Manual Testing
 

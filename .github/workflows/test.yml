@@ -151,6 +151,25 @@ jobs:
       - name: Boot the shipped compose stack
         run: ./scripts/compose-smoke.sh ci
 
+  e2e-storage:
+    name: Storage end to end
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      # The sink's tests use a mock HTTP server: they prove a write was sent,
+      # not what was stored. This runs the real binary against a real
+      # VictoriaMetrics and compares every sample -- count, value, timestamp,
+      # labels -- including across a storage outage and a core restart.
+      - name: Real binary against real VictoriaMetrics
+        run: ./scripts/e2e-storage.sh
+
   install-smoke:
     name: Release bundle and installer
     runs-on: ubuntu-latest

@@ -336,3 +336,39 @@ func TestVMSink_DrainsBacklogPublishedBeforeStart(t *testing.T) {
 		return mock.lineCount() >= backlog
 	}, 5*time.Second, 50*time.Millisecond, "sink did not drain the full backlog")
 }
+
+// A consumer created before the sink managed its own AckWait carries
+// JetStream's 30s default. Start must bring it in line: 30s is how long a
+// restarted core left its predecessor's last batch undelivered.
+func TestVMSink_StartMigratesConsumerAckWait(t *testing.T) {
+	_, _, js := startTestNATSServer(t, true)
+	newSinkTestStream(t, js)
+	srv, _ := newMockVM(0)
+	defer srv.Close()
+
+	cfg := sinkTestConfig(srv.URL)
+	_, err := js.AddConsumer("SINK_TEST", &nats.ConsumerConfig{
+		Durable:       cfg.ConsumerName,
+		AckPolicy:     nats.AckExplicitPolicy,
+		FilterSubject: "platform.data.validated",
+		AckWait:       30 * time.Second,
+	})
+	require.NoError(t, err)
+
+	sink, err := NewVMSink(js, "platform.data.validated", cfg)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.NoError(t, sink.Start(ctx))
+	defer sink.Stop()
+
+	info, err := js.ConsumerInfo("SINK_TEST", cfg.ConsumerName)
+	require.NoError(t, err)
+	assert.Equal(t, 5*time.Second, info.Config.AckWait, "2 x 2s request_timeout, floored at 5s")
+}
+
+func TestSinkAckWait(t *testing.T) {
+	assert.Equal(t, 5*time.Second, sinkAckWait(time.Second), "floor")
+	assert.Equal(t, 10*time.Second, sinkAckWait(5*time.Second), "the default request_timeout")
+	assert.Equal(t, 60*time.Second, sinkAckWait(30*time.Second))
+}

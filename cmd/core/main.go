@@ -186,7 +186,15 @@ func main() {
 	// InProcessServer bypasses the TCP listener entirely, so the core identity
 	// never crosses a socket and is unaffected by the bind address. Auth is
 	// still enforced on this path.
-	ncOpts := []nats.Option{nats.InProcessServer(ns)}
+	// closed fires when the connection has finished draining. Shutdown waits
+	// on it: Drain returns before the buffered acks and naks are flushed, and
+	// shutting the server down under them leaves the sink's in-flight
+	// messages pending until AckWait (30s) expires on the next start.
+	closed := make(chan struct{})
+	ncOpts := []nats.Option{
+		nats.InProcessServer(ns),
+		nats.ClosedHandler(func(*nats.Conn) { close(closed) }),
+	}
 	if cfg.NATS.Auth.Mode != core.NATSAuthModeOff {
 		ncOpts = append(ncOpts, nats.UserInfo(coreIdentity.Username, coreIdentity.Secret))
 	}
@@ -380,9 +388,20 @@ func main() {
 	if sink != nil {
 		sink.Stop()
 	}
-	nc.Drain()
+	if err := nc.Drain(); err == nil {
+		select {
+		case <-closed:
+		case <-time.After(shutdownDrainTimeout):
+			log.Printf("[Core] NATS drain did not finish within %s", shutdownDrainTimeout)
+		}
+	}
 	ns.Shutdown()
 }
+
+// shutdownDrainTimeout bounds how long shutdown waits for the core's own
+// connection to flush. It is well inside the 10s docker and 90s systemd stop
+// timeouts.
+const shutdownDrainTimeout = 5 * time.Second
 
 func checkConstraints(cfg core.CoreConfig) (core.ConstraintsReport, error) {
 	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
