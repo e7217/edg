@@ -118,6 +118,9 @@ VictoriaMetrics, which is a separate `vm-data` volume in the compose stack and
 `/opt/edg/data/victoria-metrics` in a host install. Back up both, or you keep
 the plant model and lose every reading it describes.
 
+For master data alone there is a portable form that also opens in a
+spreadsheet — see [Plant Bundles](#plant-bundles).
+
 To check the stack after a change to the compose file or the image, run
 `scripts/compose-smoke.sh` — it boots the stack, waits for the healthcheck,
 verifies both scrape targets and asserts that state survives a container
@@ -601,6 +604,52 @@ provisioned.
 - **Nothing marks a point writable.** Control is not implemented — neither SDK
   can receive a command — so a `writable` flag would be a field with no readers
   that made the gateway look like it can write to a PLC when it cannot.
+
+## Plant Bundles
+
+A plant bundle is all of master data as a directory you can open in a
+spreadsheet, review in a diff, keep as a backup, and reuse at the next site:
+
+```
+plant/
+  templates/<name>.yaml   asset kinds
+  assets.csv              id, name, template_name, labels (;-separated),
+                          source, attr.<key>..., ext.<key>...
+  relations.csv           source_asset_id, relation_type, target_asset_id
+  points.csv              asset_id, protocol, poll_interval_ms, name,
+                          value_type, unit, address, enabled, encoding.<key>...
+```
+
+```bash
+edg-core -export-plant ./plant             # write the current plant
+edg-core -import-plant ./plant -dry-run    # what would change, nothing written
+edg-core -import-plant ./plant             # apply it
+```
+
+- **Written for Excel.** The CSVs are UTF-8 with a byte-order mark, so Korean
+  names open correctly; a BOM is accepted on import but not required, and rows
+  a spreadsheet saved with trailing empty cells are fine.
+- **One row per point**, grouped by `asset_id`. `protocol` and
+  `poll_interval_ms` belong to the asset's list: give them on the first row and
+  leave them blank below, or repeat them — but two different values for one
+  asset is an error. `encoding.<key>` columns become the point's encoding; a
+  cell that reads as a number is stored as a number (`encoding.scale` = `0.1`),
+  `true`/`false` as a boolean, and an empty cell leaves the key out.
+- **Import is an upsert and never deletes.** An asset absent from `assets.csv`
+  is kept. Assets are matched by `id`, relations by (source, type, target), point
+  lists by asset.
+- **Idempotent.** Importing the same bundle twice reports everything
+  `unchanged`, and an unchanged point list is not rewritten — its version does
+  not advance, so adapters provisioned from it are not rebuilt.
+- **Every problem, in one pass.** Each rejected row is reported with its file
+  and line; every other row is applied. The exit status is 1 if any row was
+  rejected.
+- **`-dry-run` is exact.** It runs the real import against a copy of the
+  metadata database and throws the copy away, so it reports the same conflicts
+  and validation errors a real run would.
+- **A running core does not see a CLI import as events.** Restart it afterwards;
+  provisioned adapters also pick up changed point lists at their next
+  reconcile (5 minutes).
 
 ## Asset Relations
 
