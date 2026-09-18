@@ -48,19 +48,22 @@ const DefaultSinkConsumerStatInterval = 15 * time.Second
 
 // CoreConfig contains runtime settings for the embedded core process.
 type CoreConfig struct {
-	NATS               NATSConfig         `yaml:"nats"`
-	Storage            StorageConfig      `yaml:"storage"`
-	Templates          TemplateConfig     `yaml:"templates"`
-	Logging            LoggingConfig      `yaml:"logging"`
-	JetStream          JetStreamConfig    `yaml:"jetstream"`
-	UnknownAssetPolicy string             `yaml:"unknown_asset_policy"`
-	Alarm              AlarmConfig        `yaml:"alarm"`
-	Constraints        ConstraintsConfig  `yaml:"constraints"`
-	HTTP               HTTPConfig         `yaml:"http"`
-	Sink               SinkConfig         `yaml:"sink"`
-	DataContract       DataContractConfig `yaml:"data_contract"`
-	Adapters           AdaptersConfig     `yaml:"adapters"`
-	Metrics            MetricsConfig      `yaml:"metrics"`
+	NATS               NATSConfig      `yaml:"nats"`
+	Storage            StorageConfig   `yaml:"storage"`
+	Templates          TemplateConfig  `yaml:"templates"`
+	Logging            LoggingConfig   `yaml:"logging"`
+	JetStream          JetStreamConfig `yaml:"jetstream"`
+	UnknownAssetPolicy string          `yaml:"unknown_asset_policy"`
+	// LogDataValues logs every received value. For development: it costs a
+	// synchronous log write per value on the ingest path.
+	LogDataValues bool               `yaml:"log_data_values"`
+	Alarm         AlarmConfig        `yaml:"alarm"`
+	Constraints   ConstraintsConfig  `yaml:"constraints"`
+	HTTP          HTTPConfig         `yaml:"http"`
+	Sink          SinkConfig         `yaml:"sink"`
+	DataContract  DataContractConfig `yaml:"data_contract"`
+	Adapters      AdaptersConfig     `yaml:"adapters"`
+	Metrics       MetricsConfig      `yaml:"metrics"`
 }
 
 // MetricsConfig configures the Prometheus exposition surface (ADR 0009).

@@ -904,7 +904,7 @@ curl -s localhost:8428/api/v1/targets | jq '.data.activeTargets[] | {job: .label
 | Is the gateway keeping up? | `edg_core_sink_consumer_pending` |
 | Is data being dropped before storage? | `edg_core_data_contract_violations_total{reason}`, `edg_core_data_messages_rejected_total`, `edg_core_data_values_dropped_total`, `edg_core_sink_values_skipped_total{reason}`, `edg_core_sink_messages_acked_total{outcome="poison"}` |
 | Is an adapter out of step with master data? | `edg_core_data_contract_violations_total{reason=~"type_mismatch\|unit_mismatch"}`, `edg_core_enrich_metadata_overrides_total` |
-| Is ingest about to become a slow consumer? | `edg_core_data_handle_seconds` — if its tail approaches the interval between messages, NATS starts dropping deliveries silently |
+| Is ingest about to become a slow consumer? | `edg_core_data_handle_seconds` — if its tail approaches the interval between messages, the queue grows; `edg_core_data_messages_dropped_total` counts the messages NATS then dropped. See the [capacity baseline](perf/capacity-baseline.md) for where that happens |
 | Is the stream about to discard old data? | `edg_core_js_bytes` against `edg_core_js_stream_max_bytes` |
 | Is an adapter down? | `edg_core_adapters{availability}` for the fleet, `edg_core_adapter_up{adapter_id}` for one |
 | Is the box about to die? | `process_resident_memory_bytes`, `process_open_fds` against `process_max_fds`, `go_goroutines` |

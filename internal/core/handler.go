@@ -3,7 +3,9 @@ package core
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -21,6 +23,8 @@ type DataHandler struct {
 	events             *EventPublisher // for metadata change notifications
 	enricher           *Enricher
 	contract           *ContractChecker
+	logValues          bool
+	undeclaredLog      *rateLimitedLog
 }
 
 // These counters are stored in *expvar.Int and published under their historical
@@ -191,6 +195,10 @@ type DataHandlerOptions struct {
 	// Contract applies the data contract. Nil builds an enforcing checker on
 	// the handler's store.
 	Contract *ContractChecker
+	// LogValues logs every received value. Off by default: at 200k points/s
+	// it is 200k synchronous log writes a second on the ingest goroutine, and
+	// it was the difference between a p99 of 424ms and 2ms (docs/perf).
+	LogValues bool
 }
 
 // DeadLetterMessage records a failed core-to-JetStream publish attempt.
@@ -237,6 +245,8 @@ func NewDataHandlerWithConfig(js nats.JetStreamContext, store *Store, opts DataH
 
 	return &DataHandler{
 		contract:           contract,
+		logValues:          opts.LogValues,
+		undeclaredLog:      &rateLimitedLog{every: undeclaredLogEvery},
 		store:              store,
 		js:                 js,
 		validatedSubject:   validatedSubject,
@@ -312,11 +322,11 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 	if profile != nil && !profile.Exists {
 		undeclaredAssets.With(h.unknownAssetPolicy).Inc()
 		if h.unknownAssetPolicy == UnknownAssetPolicyDeadLetter {
-			log.Printf("[Core] undeclared asset -> dead-letter: %s", data.AssetID)
+			h.undeclaredLog.printf("[Core] undeclared asset -> dead-letter: %s", data.AssetID)
 			h.publishDeadLetter(msg, errUndeclaredAsset, result.Violations...)
 			return
 		}
-		log.Printf("[Core] undeclared asset (pass_through): %s", data.AssetID)
+		h.undeclaredLog.printf("[Core] undeclared asset (pass_through): %s", data.AssetID)
 	}
 
 	// The contract may have stamped a timestamp, filled a unit or removed
@@ -355,7 +365,9 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 		h.publishDeadLetter(msg, errContractPartial, result.Violations...)
 	}
 
-	// Log output
+	if !h.logValues {
+		return
+	}
 	log.Printf("[Core] Asset: %s, Tags: %d", data.AssetID, len(data.Values))
 	for _, v := range data.Values {
 		switch {
@@ -367,6 +379,38 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 			log.Printf("       ├─ %s = %v [%s]", v.Name, *v.Flag, v.Quality)
 		}
 	}
+}
+
+// undeclaredLogEvery bounds the undeclared-asset log. A plant that has not
+// declared its assets yet sends every message through that path, and a line
+// per message is a log write per message on the ingest goroutine.
+// edg_core_undeclared_assets_total counts every one.
+const undeclaredLogEvery = 10 * time.Second
+
+// rateLimitedLog prints at most one line per interval and says how many it
+// suppressed. HandleAssetData can run concurrently, so it is locked.
+type rateLimitedLog struct {
+	every time.Duration
+
+	mu         sync.Mutex
+	last       time.Time
+	suppressed int
+}
+
+func (l *rateLimitedLog) printf(format string, args ...any) {
+	l.mu.Lock()
+	now := time.Now()
+	if now.Sub(l.last) < l.every {
+		l.suppressed++
+		l.mu.Unlock()
+		return
+	}
+	if l.suppressed > 0 {
+		format += fmt.Sprintf(" (and %d more since the last line)", l.suppressed)
+	}
+	l.last, l.suppressed = now, 0
+	l.mu.Unlock()
+	log.Printf(format, args...)
 }
 
 func (h *DataHandler) publishDeadLetter(msg *nats.Msg, publishErr error, violations ...Violation) {

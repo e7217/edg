@@ -1,7 +1,11 @@
 package core
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -290,4 +294,23 @@ func TestHandleAssetData_ExistingAssetUnaffected(t *testing.T) {
 	require.NotNil(t, asset)
 	assert.Equal(t, "Existing Manual Sensor", asset.Name)
 	assert.Equal(t, SourceManual, asset.Source)
+}
+
+// The undeclared-asset log once wrote a line per message; in a plant that has
+// not declared its assets that is a log write per message on the ingest path.
+func TestRateLimitedLogSuppressesWithinTheInterval(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	l := rateLimitedLog{every: time.Hour}
+	for i := 0; i < 5; i++ {
+		l.printf("undeclared %d", i)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "undeclared"), "one line per interval")
+	assert.Equal(t, 4, l.suppressed)
+
+	l.last = time.Now().Add(-2 * time.Hour)
+	l.printf("undeclared again")
+	assert.Contains(t, buf.String(), "(and 4 more since the last line)")
 }
