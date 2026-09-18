@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -110,13 +111,94 @@ func TestServerBearerAuth(t *testing.T) {
 	server := httptest.NewServer(newHTTPTestServer(store, Options{Token: "secret"}).Handler())
 	t.Cleanup(server.Close)
 
-	status, resp := getJSON(t, server.URL+"/api/v1/health", "")
+	status, resp := getJSON(t, server.URL+"/api/v1/assets", "")
 	require.Equal(t, http.StatusUnauthorized, status)
 	require.False(t, resp.Success)
 
-	status, resp = getJSON(t, server.URL+"/api/v1/health", "secret")
+	status, resp = getJSON(t, server.URL+"/api/v1/assets", "wrong")
+	require.Equal(t, http.StatusUnauthorized, status)
+
+	status, resp = getJSON(t, server.URL+"/api/v1/assets", "secret")
 	require.Equal(t, http.StatusOK, status)
 	require.True(t, resp.Success)
+}
+
+// #107: configuring a token made the operator UI unreachable, because a
+// browser navigating to the page cannot send an Authorization header.
+func TestTokenKeepsUIReachableAndDataProtected(t *testing.T) {
+	store := newHTTPTestStore(t)
+	server := httptest.NewServer(newHTTPTestServer(store, Options{Token: "secret", WebUIEnabled: true}).Handler())
+	t.Cleanup(server.Close)
+
+	for _, path := range []string{"/", "/index.html"} {
+		resp, err := http.Get(server.URL + path)
+		require.NoError(t, err)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		assert.Equal(t, http.StatusOK, resp.StatusCode, path)
+		assert.Contains(t, string(body), "<html", path)
+		// The page reaches data only through the API, with the token.
+		assert.Contains(t, string(body), `headers["Authorization"] = "Bearer " + token()`)
+	}
+
+	status, _ := getJSON(t, server.URL+"/api/v1/health", "")
+	assert.Equal(t, http.StatusOK, status, "a health probe needs no secret")
+
+	for _, path := range []string{"/api/v1/assets", "/api/v1/version", "/api/v1/relations", "/api/v1/points"} {
+		status, _ := getJSON(t, server.URL+path, "")
+		assert.Equal(t, http.StatusUnauthorized, status, "%s must stay behind the token", path)
+	}
+}
+
+// Without the UI mounted, nothing outside /api is served, so nothing outside
+// /api may skip auth either.
+func TestPublicPathsNeedTheUI(t *testing.T) {
+	store := newHTTPTestStore(t)
+	server := httptest.NewServer(newHTTPTestServer(store, Options{Token: "secret"}).Handler())
+	t.Cleanup(server.Close)
+
+	resp, err := http.Get(server.URL + "/")
+	require.NoError(t, err)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+}
+
+func TestUnknownAPIRouteIsJSON404(t *testing.T) {
+	store := newHTTPTestStore(t)
+	server := httptest.NewServer(newHTTPTestServer(store, Options{Token: "secret", WebUIEnabled: true}).Handler())
+	t.Cleanup(server.Close)
+
+	status, resp := getJSON(t, server.URL+"/api/v1/nope", "secret")
+	assert.Equal(t, http.StatusNotFound, status)
+	assert.False(t, resp.Success)
+	assert.Equal(t, "no such API route", resp.Error)
+}
+
+func TestCORSPreflight(t *testing.T) {
+	store := newHTTPTestStore(t)
+	server := httptest.NewServer(newHTTPTestServer(store, Options{
+		Token: "secret", CORSAllowedOrigins: []string{"http://ui.example"},
+	}).Handler())
+	t.Cleanup(server.Close)
+
+	preflight := func(origin string) *http.Response {
+		req, err := http.NewRequest(http.MethodOptions, server.URL+"/api/v1/assets/x", nil)
+		require.NoError(t, err)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPatch)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		return resp
+	}
+
+	ok := preflight("http://ui.example")
+	assert.Equal(t, http.StatusNoContent, ok.StatusCode, "a preflight carries no token and must not need one")
+	assert.Contains(t, ok.Header.Get("Access-Control-Allow-Methods"), "PATCH")
+
+	denied := preflight("http://evil.example")
+	assert.NotEqual(t, http.StatusNoContent, denied.StatusCode, "an unlisted origin gets no blanket 204")
+	assert.Empty(t, denied.Header.Get("Access-Control-Allow-Origin"))
 }
 
 func getJSON(t *testing.T, url, token string) (int, testResponse) {

@@ -209,7 +209,7 @@ func TestUnauthorizedReasons(t *testing.T) {
 		before := vecValue(t, "edg_core_http_unauthorized_total", "reason", "bad_token")
 
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/version", nil)
 		req.Header.Set("Authorization", "Bearer wrong")
 		srv.Handler().ServeHTTP(rec, req)
 

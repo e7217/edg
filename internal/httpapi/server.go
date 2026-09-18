@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -119,6 +120,18 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("POST /api/v1/relations", s.handleRelationCreate)
 	mux.HandleFunc("DELETE /api/v1/relations/{id}", s.handleRelationDelete)
 
+	// Anything else under /api/ is a JSON 404, never the UI's HTML: a client
+	// that mistypes a route must get an error it can parse, and with the UI
+	// mounted at / the fallback would otherwise be index.html with a 200.
+	//
+	// One pattern per method rather than a method-less "/api/": the latter
+	// conflicts with the UI's "GET /" in the Go 1.22 mux.
+	for _, method := range apiFallbackMethods {
+		mux.HandleFunc(method+" /api/", func(w http.ResponseWriter, r *http.Request) {
+			writeError(w, http.StatusNotFound, "no such API route")
+		})
+	}
+
 	// Embedded operator UI (Phase 5). Served at the root; the more specific
 	// /api/v1/... patterns take precedence in the Go 1.22 mux.
 	if s.options.WebUIEnabled {
@@ -161,7 +174,16 @@ var routeLabels = []string{
 	"DELETE /api/v1/assets/{id}",
 	"POST /api/v1/relations",
 	"DELETE /api/v1/relations/{id}",
+	"GET /api/",
+	"POST /api/",
+	"PUT /api/",
+	"PATCH /api/",
+	"DELETE /api/",
 	"GET /",
+}
+
+var apiFallbackMethods = []string{
+	http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete,
 }
 
 var (
@@ -422,8 +444,29 @@ func isWriteMethod(method string) bool {
 	}
 }
 
+// isPublic reports whether a request needs no token. The UI's static files
+// carry no data -- everything it shows comes from /api, which stays behind the
+// token -- and a browser navigating to the page cannot attach an
+// Authorization header, so requiring one made the UI unreachable the moment a
+// token was configured (#107). The health probe is public so a load balancer
+// or docker healthcheck needs no secret; it reports "ok" and nothing else.
+func (s *Server) isPublic(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if r.URL.Path == "/api/v1/health" {
+		return true
+	}
+	return s.options.WebUIEnabled && !strings.HasPrefix(r.URL.Path, "/api/")
+}
+
 func (s *Server) auth(next http.Handler) http.Handler {
+	want := []byte("Bearer " + s.options.Token)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.isPublic(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if s.options.Token == "" {
 			// Reads stay open when no token is configured, but writes are never
 			// anonymous: they require a non-empty bearer token.
@@ -435,7 +478,9 @@ func (s *Server) auth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Header.Get("Authorization") != "Bearer "+s.options.Token {
+		// Constant time, so response latency does not leak how much of a
+		// guessed token was right.
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), want) != 1 {
 			httpUnauthorized.With(authReasonBadToken).Inc()
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -464,12 +509,16 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 			}
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		}
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+			// A preflight carries no Authorization header by design, so it is
+			// answered here, before auth -- but only for an allowed origin.
+			// Anything else falls through to auth and the router like any
+			// other request, instead of a blanket 204.
+			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
