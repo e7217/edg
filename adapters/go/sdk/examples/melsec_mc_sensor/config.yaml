@@ -1,0 +1,27 @@
+# Sample MELSEC MC protocol adapter configuration.
+#
+# The PLC connection is local to this box. What to read is either listed under
+# `points`, or -- with `asset_id` set and no `points` -- taken from the point
+# list EDG declares for that asset (address = device, encoding = type/scale).
+
+host: 192.168.3.39
+port: 5007           # the MC protocol port set in the PLC's Ethernet settings
+poll_interval: 1.0   # seconds
+timeout: 3.0         # seconds, per request
+
+points:
+  - name: temperature
+    address: D100
+    type: int16      # int16 (default), uint16, int32, uint32, float32
+    scale: 0.1
+    unit: "°C"
+  - name: counter
+    address: D200    # a 32-bit value spans D200/D201, low word first
+    type: int32
+  - name: running
+    address: M100    # bit devices read as a flag
+  - name: alarm
+    address: D300.4  # bit 4 of D300
+
+# asset_id: press-02
+# nats_url: nats://adapter:SECRET@edg-core:4222   # or EDG_NATS_URL

@@ -254,6 +254,11 @@ These dependencies are used **only by the reference adapter examples** under `ad
 | github.com/gopcua/opcua | MIT | https://github.com/gopcua/opcua |
 | gopkg.in/yaml.v3 | MIT/Apache 2.0 | https://github.com/go-yaml/yaml |
 
+### Go MELSEC example (`adapters/go/sdk/examples/melsec_mc_sensor`)
+
+The MC protocol client is implemented in the example itself; its only
+third-party dependency is `gopkg.in/yaml.v3` (MIT/Apache 2.0).
+
 The OPC UA example's tests also use the in-process server in `github.com/gopcua/opcua/server` (same license).
 
 Both `pymodbus` and `goburrow/modbus` are distributed under the BSD-3-Clause license, which is compatible with EDG's Apache 2.0 license. The BSD-3-Clause non-endorsement clause prohibits using the original author's name to promote derivative products without prior written consent; factual statements about library use are fine.

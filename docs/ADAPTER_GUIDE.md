@@ -220,6 +220,38 @@ points:
   encryption need certificates on both ends; extend `ConnectDevice` when a
   server requires them.
 
+## MELSEC Reference Adapter
+
+[`adapters/go/sdk/examples/melsec_mc_sensor`](../adapters/go/sdk/examples/melsec_mc_sensor)
+reads Mitsubishi MELSEC PLCs (Q, L, iQ-R, and FX5 with MC protocol enabled)
+over the **MC protocol, 3E frame, binary code**, on TCP. The protocol client is
+part of the example — no third-party PLC library.
+
+On the PLC, enable the MC protocol on the Ethernet port with communication data
+code *binary*, and open a TCP port for it; that port goes in the config.
+
+```yaml
+host: 192.168.3.39
+port: 5007
+points:
+  - {name: temperature, address: D100, type: int16, scale: 0.1, unit: "°C"}
+  - {name: counter,     address: D200, type: int32}   # D200/D201, low word first
+  - {name: running,     address: M100}                # a bit device reads as a flag
+  - {name: alarm,       address: D300.4}              # bit 4 of a word
+```
+
+- **Devices**: D, W, R, ZR (words) and M, L, B, X, Y (bits). X, Y, B and W are
+  numbered in **hexadecimal**, as on the PLC (`X1F`), the rest in decimal.
+- **Types**: `int16` (default), `uint16`, `int32`, `uint32`, `float32` — a
+  32-bit value is the device and the next one, low word first, which is how
+  MELSEC stores DINT and REAL — and `bit`.
+- **A refused device** (the PLC's end code, e.g. out of range) skips that point
+  and is logged; the rest of the poll is published. A transport error
+  reconnects.
+- **From master data** with `asset_id` and no `points`: a point's `address` is
+  the device and `encoding` carries `type` and `scale`; the list's protocol is
+  `melsec-mc`.
+
 ## Metadata Change Events
 
 Subscribe to `platform.meta.*.changed` to react to asset and relation metadata changes. EDG Core publishes these events after successful store mutations only; failed create, update, or delete requests do not emit events.
