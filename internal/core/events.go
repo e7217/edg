@@ -11,6 +11,10 @@ import (
 const (
 	SubjectAssetChanged    = "platform.meta.asset.changed"
 	SubjectRelationChanged = "platform.meta.relation.changed"
+	// SubjectPointsChanged announces a replaced or deleted point list. The
+	// data contract's declaration cache flushes on it, and it is the signal an
+	// adapter re-reads its point list on.
+	SubjectPointsChanged = "platform.meta.points.changed"
 
 	SubjectAssetAncestors   = "platform.meta.asset.ancestors"
 	SubjectAssetDescendants = "platform.meta.asset.descendants"
@@ -77,6 +81,7 @@ type EntityType string
 const (
 	EntityAsset    EntityType = "asset"
 	EntityRelation EntityType = "relation"
+	EntityPoints   EntityType = "points"
 )
 
 type MetaChangeEvent struct {
@@ -104,6 +109,11 @@ func (p *EventPublisher) PublishAssetChanged(ev MetaChangeEvent) {
 
 func (p *EventPublisher) PublishRelationChanged(ev MetaChangeEvent) {
 	p.publishMetaChange(SubjectRelationChanged, normalizeMetaChangeEvent(ev, EntityRelation))
+}
+
+// PublishPointsChanged announces a point-list write. EntityID is the asset id.
+func (p *EventPublisher) PublishPointsChanged(ev MetaChangeEvent) {
+	p.publishMetaChange(SubjectPointsChanged, normalizeMetaChangeEvent(ev, EntityPoints))
 }
 
 func (p *EventPublisher) PublishAlarmImpactComputed(impact AlarmImpact) {

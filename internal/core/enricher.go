@@ -34,6 +34,14 @@ var (
 		Help: "Ancestor queries that returned an error. The message still goes through, un-enriched.",
 	})
 
+	// Adapter metadata that contradicted master data. Master data wins (ADR
+	// 0010), so each of these is an adapter reporting the wrong line, area or
+	// equipment -- usually a stale adapter config after a re-parenting.
+	enricherMetadataOverrides = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_enrich_metadata_overrides_total",
+		Help: "Adapter-supplied metadata values replaced because master data derives a different value for the same key.",
+	})
+
 	enricherLookupSeconds = metrics.Default.NewHistogram(metrics.Desc{
 		Name: "edg_core_enricher_ancestor_lookup_seconds",
 		Help: "Duration of the recursive ancestor query behind a cache miss. On SD-card SQLite this is where ingest latency comes from. Buckets are provisional.",
@@ -86,7 +94,13 @@ func NewEnricher(store *Store, opts EnricherOptions) *Enricher {
 	}
 }
 
-// Enrich adds ancestor tags to data.Metadata without overwriting existing keys.
+// Enrich adds ancestor tags to data.Metadata.
+//
+// Master data is the authority for the keys it derives: an adapter that sends
+// equipment=X for an asset whose master data says equipment=Y is overridden,
+// and the override is counted. Keys master data does not derive are left as the
+// adapter sent them. Before ADR 0010 the adapter won, which made a stale adapter
+// config indistinguishable from the plant's actual structure.
 func (e *Enricher) Enrich(data *AssetData) error {
 	if e == nil || e.store == nil || data == nil || data.AssetID == "" {
 		return nil
@@ -104,8 +118,8 @@ func (e *Enricher) Enrich(data *AssetData) error {
 		data.Metadata = make(map[string]string, len(tags))
 	}
 	for key, value := range tags {
-		if _, exists := data.Metadata[key]; exists {
-			continue
+		if existing, exists := data.Metadata[key]; exists && existing != value {
+			enricherMetadataOverrides.Inc()
 		}
 		data.Metadata[key] = value
 	}

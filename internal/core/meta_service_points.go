@@ -95,12 +95,39 @@ func (s *MetadataService) UpsertPointList(req UpsertPointListRequest) (*PointLis
 		PollIntervalMS: req.PollIntervalMS,
 		Points:         points,
 	}
+	before, err := s.store.GetPointList(req.AssetID)
+	if err != nil {
+		return nil, err
+	}
 	if _, err := s.store.UpsertPointList(pl); err != nil {
 		return nil, err
 	}
 	// Read back rather than returning what was written: version, created_at and
 	// updated_at are assigned by the store, and the caller needs the version.
-	return s.store.GetPointList(req.AssetID)
+	stored, err := s.store.GetPointList(req.AssetID)
+	if err != nil {
+		return nil, err
+	}
+	eventType := EventUpdated
+	if before == nil {
+		eventType = EventCreated
+	}
+	s.events.PublishPointsChanged(MetaChangeEvent{
+		EventType: eventType,
+		EntityID:  req.AssetID,
+		Before:    pointListOrNil(before),
+		After:     stored,
+	})
+	return stored, nil
+}
+
+// pointListOrNil keeps a typed nil out of the event's `any` field, where it
+// would marshal as null instead of being omitted.
+func pointListOrNil(pl *PointList) any {
+	if pl == nil {
+		return nil
+	}
+	return pl
 }
 
 // DeletePointList removes an asset's declarations.
@@ -115,5 +142,13 @@ func (s *MetadataService) DeletePointList(req DeletePointListRequest) error {
 	if pl == nil {
 		return newServiceError(ErrNotFound, "point list not found")
 	}
-	return s.store.DeletePointList(req.AssetID)
+	if err := s.store.DeletePointList(req.AssetID); err != nil {
+		return err
+	}
+	s.events.PublishPointsChanged(MetaChangeEvent{
+		EventType: EventDeleted,
+		EntityID:  req.AssetID,
+		Before:    pl,
+	})
+	return nil
 }

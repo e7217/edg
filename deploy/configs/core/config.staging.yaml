@@ -56,6 +56,11 @@ jetstream:
 
 # Built-in VictoriaMetrics sink. Override `url` with EDG_SINK_URL when
 # VictoriaMetrics runs on a different host (e.g. a container service name).
+# What platform.data.validated guarantees (ADR 0010). enforce removes what
+# violates the contract and dead-letters it; warn only counts and logs.
+data_contract:
+  mode: enforce
+
 sink:
   enabled: true
   url: http://localhost:8428
@@ -64,6 +69,10 @@ sink:
   batch_max_size: 500
   flush_interval: 1s
   request_timeout: 5s
+  # Text readings become edg_data_text{value="..."} 1 (ADR 0010); "drop" keeps
+  # numbers and flags only. Each distinct string is a series.
+  text_values: label
+  text_max_length: 128
 
 logging:
   level: info

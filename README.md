@@ -22,15 +22,15 @@
 *   **Role-Based Authorization**: The NATS subject contract is enforced, not just documented. Adapters publish telemetry and read master data but cannot mutate it; only core can publish `platform.data.validated`. See [ADR 0007](docs/adr/0007-nats-subject-authorization.md).
 *   **Semantic Asset Model**: First-class asset relations (`partOf`, `connectedTo`, `locatedIn`) and external identifiers (`irdi`, `eclass`, `aas`, `opcua_node_id`) — a foundation for digital twin work, not just point collection.
 *   **Wire-Contract First**: The integration contract is a small set of NATS subjects, not an SDK. Any language with a NATS client can publish data and subscribe to metadata events — Python and Go SDKs are conveniences for the common cases.
-*   **Time-Series Ready**: A built-in durable sink writes validated data straight to VictoriaMetrics (or any InfluxDB line-protocol endpoint) — no separate metrics agent. The validated stream is also available on NATS for any other consumer.
+*   **Time-Series Ready**: A built-in durable sink writes validated data straight to VictoriaMetrics (or any InfluxDB line-protocol endpoint) — numbers, flags and text states alike, no separate metrics agent. The validated stream is also available on NATS for any other consumer.
 
 ## Key Features
 
 *   **Explicit Master Data**: Assets are declared through the HTTP write API, the operator UI, or template import — never as a side effect of a device publishing. Telemetry for an undeclared asset follows `unknown_asset_policy` (`pass_through` or `dead_letter`) and is counted in `edg_core_undeclared_assets`.
 *   **Metadata Change Events**: Asset and relation mutations are published on `platform.meta.*.changed` with `before` / `after` snapshots for reactive adapters and sidecars. See [Metadata Events](docs/events.md).
 *   **Relationship-Aware Enrichment**: Validated data can carry ancestor tags derived from asset relations for line, area, and factory-level queries.
-*   **Edge-Side Data Validation**: Template-driven schema and quality checks applied before data reaches storage.
-*   **Dead-Letter Visibility**: Validated-publish failures are routed to `platform.data.deadletter` with expvar counters for monitoring.
+*   **Data Contract**: A message reaches `platform.data.validated` only if it is well-formed and agrees with master data — declared value types and units, master data over adapter metadata. What fails is removed at the smallest scope (message, value, key), counted by reason and dead-lettered with the original payload. See [ADR 0010](docs/adr/0010-data-contract.md).
+*   **Dead-Letter Visibility**: Contract violations, undeclared assets (under `dead_letter` policy) and validated-publish failures are routed to `platform.data.deadletter` with the original payload and the reason, and counted on `/metrics`.
 *   **Multi-Language Adapters**: Python SDK, Go SDK, or direct NATS publishing — pick the language that matches your protocol library.
 
 ## Quick Start
