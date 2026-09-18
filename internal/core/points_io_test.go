@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -75,8 +76,20 @@ points:
 	assert.Equal(t, 1, n)
 	after, err := svc.GetPointList("pump-a")
 	require.NoError(t, err)
-	assert.Equal(t, pl.Points, after.Points, "a round trip changes nothing but the version")
+	// updated_at is refreshed by the re-import itself, at one-second
+	// resolution, so comparing it made this test fail whenever the import
+	// straddled a second. created_at must survive; that is the property.
+	assert.Equal(t, withoutUpdatedAt(pl.Points), withoutUpdatedAt(after.Points),
+		"a round trip changes nothing but the version and updated_at")
 	assert.Equal(t, pl.Version+1, after.Version)
+}
+
+func withoutUpdatedAt(points []Point) []Point {
+	out := append([]Point(nil), points...)
+	for i := range out {
+		out[i].UpdatedAt = time.Time{}
+	}
+	return out
 }
 
 // Import must report every bad file, not stop at the first: an operator
