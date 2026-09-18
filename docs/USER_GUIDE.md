@@ -658,16 +658,19 @@ http:
     - http://localhost:3000
 ```
 
-If the environment variable named by `token_env` contains a value, requests must
-include `Authorization: Bearer <token>`. If the variable is unset, the API is
-anonymous and should remain bound to localhost.
+If the environment variable named by `token_env` contains a value, every
+`/api/` request must include `Authorization: Bearer <token>`, reads included.
+If the variable is unset, reads are anonymous, writes are refused, and the API
+should remain bound to localhost.
 
-> **Known issue ([#107](https://github.com/e7217/edg/issues/107)).** Configuring
-> an HTTP token currently makes the embedded operator UI unreachable: the auth
-> middleware requires a bearer header on every request including the UI's own
-> HTML, which a browser navigation cannot supply. Until that is fixed, a
-> deployment that sets a token should set `http.webui_enabled: false`. This is
-> independent of the NATS authorization above — that one does not affect the UI.
+Two things never need the token:
+
+- `GET /api/v1/health`, which returns `{"status":"ok"}` and nothing else, so a
+  load balancer or container healthcheck needs no secret;
+- the operator UI's static files (when `webui_enabled`), which contain no data.
+  Everything the UI displays comes from `/api/`, with the token.
+
+An unknown `/api/` route answers a JSON 404, never the UI page.
 
 All responses use the same envelope as NATS metadata replies:
 
@@ -719,9 +722,10 @@ http:
   webui_enabled: true
 ```
 
-The UI is embedded in the binary (`go:embed`). Reads load anonymously; **writes
-require a bearer token** — paste it into the token field at the top of the page
-(stored in the browser's local storage). The UI refreshes on demand via a button;
+The UI is embedded in the binary (`go:embed`). If a token is configured, paste
+it into the token field at the top of the page (stored in the browser's local
+storage); the UI sends it with every request, reads included, and says so when
+the server refuses it. Without a configured token the UI can read but not write. The UI refreshes on demand via a button;
 live push updates are a planned enhancement. Keep the HTTP address bound to
 localhost unless a token is configured.
 
