@@ -31,6 +31,10 @@ templates:
 # dead_letter: route to the dead-letter subject instead.
 unknown_asset_policy: pass_through
 
+# Log every received value. Development only: it is a synchronous log write
+# per value on the ingest path (docs/perf/capacity-baseline.md).
+log_data_values: true
+
 # What platform.data.validated guarantees (ADR 0010). enforce removes what
 # violates the contract and dead-letters it; warn only counts and logs.
 data_contract:

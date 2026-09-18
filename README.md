@@ -8,7 +8,7 @@
 
 > **Industrial Edge Data Gateway**
 > 
-> Low-overhead, high-performance edge gateway for industrial data ingestion, validation, and storage.
+> Low-overhead edge gateway for industrial data ingestion, validation, and storage.
 
 > [!WARNING]
 > EDG is in early development and is not yet production-ready.
@@ -16,7 +16,7 @@
 
 ## Why EDG?
 
-*   **Lightweight & Fast**: Single Go binary, embedded NATS, SQLite metadata. No external services required to run a node.
+*   **Lightweight, and measured**: Single Go binary, embedded NATS, SQLite metadata. No external services required to run a node. On an 8-vCPU box shared with VictoriaMetrics and the load generator, one node sustained **200,000 points/s (4,000 messages/s) with p99 20 ms and nothing lost** — see the [capacity baseline](docs/perf/capacity-baseline.md) for the curve, the ceiling and what happens past it.
 *   **Explicit Reliability Boundary**: At-least-once delivery starts at the JetStream publish ack — operators know exactly where adapter retry or buffering is still needed. See [ADR 0001](docs/adr/0001-data-plane-reliability.md).
 *   **Adapter Visibility**: Adapters report runtime status automatically, so operators can see which are online, stale or degraded — and whether two are collecting the same asset. See [ADR 0008](docs/adr/0008-adapter-runtime-status.md).
 *   **Role-Based Authorization**: The NATS subject contract is enforced, not just documented. Adapters publish telemetry and read master data but cannot mutate it; only core can publish `platform.data.validated`. See [ADR 0007](docs/adr/0007-nats-subject-authorization.md).

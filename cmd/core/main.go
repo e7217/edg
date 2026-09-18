@@ -281,6 +281,7 @@ func main() {
 		UnknownAssetPolicy: cfg.UnknownAssetPolicy,
 		Enricher:           enricher,
 		Contract:           contract,
+		LogValues:          cfg.LogDataValues,
 	})
 	metaHandler := core.NewMetaHandlerWithOptions(store, loader, core.MetaHandlerOptions{
 		Events:                eventPublisher,
@@ -357,9 +358,26 @@ func main() {
 		}()
 	}
 
-	_, err = nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
+	dataSub, err := nc.Subscribe("platform.data.asset", dataHandler.HandleAssetData)
 	if err != nil {
 		log.Fatalf("Failed to subscribe: %v", err)
+	}
+	// Past its pending limit the NATS client drops ingest messages with no
+	// error anywhere. docs/perf/capacity-baseline.md reproduces it at about
+	// 4,000 messages/s on an 8-vCPU box: 9.7% of readings lost, visible only
+	// as a gap in storage. The server's slow-consumer count does not include
+	// it -- this is the client dropping for its own subscription.
+	if cfg.Metrics.Enabled {
+		metrics.Default.NewFuncCounter(metrics.Desc{
+			Name: "edg_core_data_messages_dropped_total",
+			Help: "Messages on platform.data.asset dropped because the ingest subscription fell behind its pending limit. They are lost: adapter-to-core is plain NATS (ADR 0001).",
+		}, func() float64 {
+			n, err := dataSub.Dropped()
+			if err != nil {
+				return 0
+			}
+			return float64(n)
+		})
 	}
 
 	if err := metaHandler.RegisterHandlers(nc); err != nil {
