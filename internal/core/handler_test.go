@@ -17,7 +17,7 @@ func TestHandleAssetData_Success(t *testing.T) {
 	tempValue := 25.5
 	data := &AssetData{
 		AssetID:   "sensor-001",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values: []TagValue{
 			{Name: "temperature", Number: &tempValue, Unit: "celsius", Quality: "good"},
 		},
@@ -76,7 +76,7 @@ func TestHandleAssetData_PassThrough_DoesNotRegister(t *testing.T) {
 	tempValue := 25.5
 	data := &AssetData{
 		AssetID:   "undeclared-sensor",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values: []TagValue{
 			{Name: "temperature", Number: &tempValue},
 		},

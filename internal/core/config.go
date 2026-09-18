@@ -48,18 +48,19 @@ const DefaultSinkConsumerStatInterval = 15 * time.Second
 
 // CoreConfig contains runtime settings for the embedded core process.
 type CoreConfig struct {
-	NATS               NATSConfig        `yaml:"nats"`
-	Storage            StorageConfig     `yaml:"storage"`
-	Templates          TemplateConfig    `yaml:"templates"`
-	Logging            LoggingConfig     `yaml:"logging"`
-	JetStream          JetStreamConfig   `yaml:"jetstream"`
-	UnknownAssetPolicy string            `yaml:"unknown_asset_policy"`
-	Alarm              AlarmConfig       `yaml:"alarm"`
-	Constraints        ConstraintsConfig `yaml:"constraints"`
-	HTTP               HTTPConfig        `yaml:"http"`
-	Sink               SinkConfig        `yaml:"sink"`
-	Adapters           AdaptersConfig    `yaml:"adapters"`
-	Metrics            MetricsConfig     `yaml:"metrics"`
+	NATS               NATSConfig         `yaml:"nats"`
+	Storage            StorageConfig      `yaml:"storage"`
+	Templates          TemplateConfig     `yaml:"templates"`
+	Logging            LoggingConfig      `yaml:"logging"`
+	JetStream          JetStreamConfig    `yaml:"jetstream"`
+	UnknownAssetPolicy string             `yaml:"unknown_asset_policy"`
+	Alarm              AlarmConfig        `yaml:"alarm"`
+	Constraints        ConstraintsConfig  `yaml:"constraints"`
+	HTTP               HTTPConfig         `yaml:"http"`
+	Sink               SinkConfig         `yaml:"sink"`
+	DataContract       DataContractConfig `yaml:"data_contract"`
+	Adapters           AdaptersConfig     `yaml:"adapters"`
+	Metrics            MetricsConfig      `yaml:"metrics"`
 }
 
 // MetricsConfig configures the Prometheus exposition surface (ADR 0009).
@@ -186,6 +187,20 @@ type SinkConfig struct {
 	// that feeds the backlog gauges. It runs on the drain loop rather than at
 	// scrape time so that scrape traffic can never reach the data path.
 	ConsumerStatInterval time.Duration `yaml:"consumer_stat_interval"`
+	// TextValues is "label" (write a text reading as a label on a constant
+	// sample) or "drop". See ADR 0010.
+	TextValues string `yaml:"text_values"`
+	// TextMaxLength bounds a text reading written as a label, in bytes. Each
+	// distinct string is a series, so free text longer than a state code is
+	// almost certainly a cardinality leak rather than a state.
+	TextMaxLength int `yaml:"text_max_length"`
+}
+
+// DataContractConfig configures the data contract (ADR 0010).
+type DataContractConfig struct {
+	// Mode is "enforce" (remove what violates the contract) or "warn" (count
+	// and log only).
+	Mode string `yaml:"mode"`
 }
 
 type JetStreamStreamConfig struct {
@@ -279,9 +294,18 @@ func DefaultCoreConfig() CoreConfig {
 			RequestTimeout: 5 * time.Second,
 
 			ConsumerStatInterval: DefaultSinkConsumerStatInterval,
+			TextValues:           SinkTextLabel,
+			TextMaxLength:        DefaultSinkTextMaxLength,
+		},
+		DataContract: DataContractConfig{
+			Mode: DataContractEnforce,
 		},
 	}
 }
+
+// DefaultSinkTextMaxLength is long enough for any state or alarm code and
+// short enough that a free-text log line is refused rather than made a series.
+const DefaultSinkTextMaxLength = 128
 
 func LoadCoreConfig(path string) (CoreConfig, error) {
 	cfg := DefaultCoreConfig()
@@ -374,6 +398,9 @@ func (c *CoreConfig) applyDefaults() {
 		c.HTTP.TokenEnv = defaults.HTTP.TokenEnv
 	}
 	c.Sink.applyDefaults(defaults.Sink)
+	if c.DataContract.Mode == "" {
+		c.DataContract.Mode = defaults.DataContract.Mode
+	}
 	c.Adapters.applyDefaults(defaults.Adapters)
 	c.JetStream.Stream.applyDefaults(defaults.JetStream.Stream)
 }
@@ -399,6 +426,12 @@ func (c *SinkConfig) applyDefaults(defaults SinkConfig) {
 	}
 	if c.ConsumerStatInterval == 0 {
 		c.ConsumerStatInterval = defaults.ConsumerStatInterval
+	}
+	if c.TextValues == "" {
+		c.TextValues = defaults.TextValues
+	}
+	if c.TextMaxLength == 0 {
+		c.TextMaxLength = defaults.TextMaxLength
 	}
 }
 
@@ -469,6 +502,19 @@ func (c CoreConfig) validate() error {
 		if c.Sink.ConsumerStatInterval <= 0 {
 			return fmt.Errorf("invalid sink.consumer_stat_interval: %s (must be > 0)", c.Sink.ConsumerStatInterval)
 		}
+		switch c.Sink.TextValues {
+		case SinkTextLabel, SinkTextDrop:
+		default:
+			return fmt.Errorf("invalid sink.text_values: %q (allowed: label, drop)", c.Sink.TextValues)
+		}
+		if c.Sink.TextMaxLength < 0 {
+			return fmt.Errorf("invalid sink.text_max_length: %d (must be >= 0)", c.Sink.TextMaxLength)
+		}
+	}
+	switch c.DataContract.Mode {
+	case DataContractEnforce, DataContractWarn:
+	default:
+		return fmt.Errorf("invalid data_contract.mode: %q (allowed: enforce, warn)", c.DataContract.Mode)
 	}
 	return nil
 }

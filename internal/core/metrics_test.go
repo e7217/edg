@@ -319,8 +319,8 @@ func TestSinkMetrics_BacklogGaugesHoldLastValueOnError(t *testing.T) {
 	})
 }
 
-// A batch with nothing numeric is acked to stop endless redelivery. That is a
-// silent drop, and outcome=poison is the only thing that makes it visible.
+// A batch that encodes to no lines is acked to stop endless redelivery. That is
+// a drop, and outcome=poison is what makes it visible.
 func TestSinkMetrics_PoisonBatchIsCountedSeparately(t *testing.T) {
 	_, _, js := startTestNATSServer(t, true)
 	newSinkTestStream(t, js)
@@ -337,8 +337,9 @@ func TestSinkMetrics_PoisonBatchIsCountedSeparately(t *testing.T) {
 	require.NoError(t, sink.Start(ctx))
 	defer sink.Stop()
 
-	// Text-only: appendAssetDataLines emits nothing for a value with no number.
-	text := "still fine"
+	// A line break cannot be carried in a label, so the only value in the
+	// message produces no line.
+	text := "two\nlines"
 	payload, err := json.Marshal(&AssetData{
 		AssetID: "text-only",
 		Values:  []TagValue{{Name: "status", Text: &text}},
@@ -349,7 +350,7 @@ func TestSinkMetrics_PoisonBatchIsCountedSeparately(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return vecValue(t, "edg_core_sink_messages_acked_total", "outcome", "poison") > beforePoison
-	}, 5*time.Second, 50*time.Millisecond, "a batch with no numeric lines was not counted as poison")
+	}, 5*time.Second, 50*time.Millisecond, "a batch with no encodable lines was not counted as poison")
 
 	assert.Equal(t, beforeWritten,
 		vecValue(t, "edg_core_sink_messages_acked_total", "outcome", "written"),

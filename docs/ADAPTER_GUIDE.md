@@ -112,7 +112,7 @@ Modbus RTU (serial), write function codes, and multi-unit deployments are intent
 
 Subscribe to `platform.meta.*.changed` to react to asset and relation metadata changes. EDG Core publishes these events after successful store mutations only; failed create, update, or delete requests do not emit events.
 
-Events are best-effort plain NATS messages. On adapter startup, first request the current asset list through `platform.meta.asset.list`, then apply `platform.meta.asset.changed` and `platform.meta.relation.changed` events for incremental updates.
+Events are best-effort plain NATS messages. On adapter startup, first request the current asset list through `platform.meta.asset.list`, then apply `platform.meta.asset.changed` and `platform.meta.relation.changed` events for incremental updates. `platform.meta.points.changed` announces a replaced or deleted point list for one asset.
 
 See [Metadata Events](events.md) for the payload schema and examples.
 

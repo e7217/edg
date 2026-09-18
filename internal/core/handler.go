@@ -20,6 +20,7 @@ type DataHandler struct {
 	unknownAssetPolicy string
 	events             *EventPublisher // for metadata change notifications
 	enricher           *Enricher
+	contract           *ContractChecker
 }
 
 // These counters are stored in *expvar.Int and published under their historical
@@ -115,6 +116,34 @@ var (
 		Help: "Enrichment failures. The message still goes through un-enriched, so this is silent data-quality loss rather than an outage.",
 	}, "stage", []string{enrichStageEnrich, enrichStageEncode})
 
+	// The data contract (ADR 0010). Together with the dead-letter counters
+	// these say where data went that did not reach platform.data.validated:
+	// rejected (whole message), dropped (one value), or never decoded.
+	contractViolations = metrics.Default.NewCounterVec(metrics.Desc{
+		Name: "edg_core_data_contract_violations_total",
+		Help: "Data contract violations by reason. Under data_contract.mode=enforce each one removed a message, a value or a metadata key; under warn it was only counted.",
+	}, "reason", ViolationReasons)
+
+	contractMessagesRejected = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_data_messages_rejected_total",
+		Help: "Messages rejected by the data contract. Each one is dead-lettered with its violations.",
+	})
+
+	contractValuesDropped = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_data_values_dropped_total",
+		Help: "Values removed from otherwise valid messages by the data contract. The rest of the message is published; the original is dead-lettered.",
+	})
+
+	contractTimestampsFilled = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_data_timestamps_filled_total",
+		Help: "Messages without a timestamp, stamped with the time the core received them.",
+	})
+
+	contractLookupFailures = metrics.Default.NewCounter(metrics.Desc{
+		Name: "edg_core_data_contract_lookup_failures_total",
+		Help: "Master-data lookups for the data contract that failed. The message is checked against the envelope rules only and passes as if its asset were declared.",
+	})
+
 	jetStreamPublished = metrics.Default.NewCounter(metrics.Desc{
 		Name: "edg_core_jetstream_published_total",
 		Help: "Validated messages successfully published to JetStream.",
@@ -147,12 +176,21 @@ const (
 // routed under unknown_asset_policy = dead_letter.
 var errUndeclaredAsset = errors.New("undeclared asset")
 
+// Dead-letter reasons for the data contract (ADR 0010).
+var (
+	errContractRejected = errors.New("data contract: message rejected")
+	errContractPartial  = errors.New("data contract: values dropped, remainder published")
+)
+
 type DataHandlerOptions struct {
 	ValidatedSubject   string
 	DeadLetterSubject  string
 	Events             *EventPublisher
 	UnknownAssetPolicy string
 	Enricher           *Enricher
+	// Contract applies the data contract. Nil builds an enforcing checker on
+	// the handler's store.
+	Contract *ContractChecker
 }
 
 // DeadLetterMessage records a failed core-to-JetStream publish attempt.
@@ -162,6 +200,10 @@ type DeadLetterMessage struct {
 	Error           string          `json:"error"`
 	Payload         json.RawMessage `json:"payload"`
 	Timestamp       time.Time       `json:"timestamp"`
+	// Violations is set when the data contract removed something. For a
+	// partial drop the payload is the original message, and what was
+	// published is the payload minus the listed values.
+	Violations []Violation `json:"violations,omitempty"`
 }
 
 func NewDataHandler(js nats.JetStreamContext, store *Store, events ...*EventPublisher) *DataHandler {
@@ -188,7 +230,13 @@ func NewDataHandlerWithConfig(js nats.JetStreamContext, store *Store, opts DataH
 		unknownAssetPolicy = UnknownAssetPolicyPassThrough
 	}
 
+	contract := opts.Contract
+	if contract == nil {
+		contract = NewContractChecker(store, DataContractEnforce)
+	}
+
 	return &DataHandler{
+		contract:           contract,
 		store:              store,
 		js:                 js,
 		validatedSubject:   validatedSubject,
@@ -226,21 +274,60 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 	}
 	countValueKinds(data.Values)
 
-	// Undeclared assets follow the configured unknown_asset_policy. Master data is
-	// created explicitly (API/CLI/UI/import); the data plane no longer auto-registers.
-	if h.store != nil {
-		if exists, _ := h.store.AssetExists(data.AssetID); !exists {
-			undeclaredAssets.With(h.unknownAssetPolicy).Inc()
-			if h.unknownAssetPolicy == UnknownAssetPolicyDeadLetter {
-				log.Printf("[Core] undeclared asset -> dead-letter: %s", data.AssetID)
-				h.publishDeadLetter(msg, errUndeclaredAsset)
-				return
-			}
-			log.Printf("[Core] undeclared asset (pass_through): %s", data.AssetID)
+	var profile *assetProfile
+	if data.AssetID != "" {
+		p, err := h.contract.Profile(data.AssetID)
+		if err != nil {
+			contractLookupFailures.Inc()
+			log.Printf("[Core] data contract lookup failed for %s: %v", data.AssetID, err)
+		} else {
+			profile = p
 		}
 	}
 
+	result := h.contract.Apply(&data, profile)
+	if result.TimestampFilled {
+		contractTimestampsFilled.Inc()
+	}
+	for _, v := range result.Violations {
+		contractViolations.With(v.Reason).Inc()
+	}
+	if len(result.Violations) > 0 {
+		log.Printf("[Core] data contract (%s): asset %q, %d violation(s), first: %s %s",
+			h.contract.Mode(), data.AssetID, len(result.Violations),
+			result.Violations[0].Reason, result.Violations[0].Detail)
+	}
+	if result.Rejected {
+		contractMessagesRejected.Inc()
+		h.publishDeadLetter(msg, errContractRejected, result.Violations...)
+		return
+	}
+	contractValuesDropped.Add(int64(result.DroppedValues))
+	enforced := h.contract.Mode() == DataContractEnforce && len(result.Violations) > 0
+
+	// Undeclared assets follow the configured unknown_asset_policy. Master data is
+	// created explicitly (API/CLI/UI/import); the data plane no longer auto-registers.
+	// A failed lookup leaves profile nil and is not treated as undeclared: a
+	// database hiccup must not dead-letter a declared asset's data.
+	if profile != nil && !profile.Exists {
+		undeclaredAssets.With(h.unknownAssetPolicy).Inc()
+		if h.unknownAssetPolicy == UnknownAssetPolicyDeadLetter {
+			log.Printf("[Core] undeclared asset -> dead-letter: %s", data.AssetID)
+			h.publishDeadLetter(msg, errUndeclaredAsset, result.Violations...)
+			return
+		}
+		log.Printf("[Core] undeclared asset (pass_through): %s", data.AssetID)
+	}
+
+	// The contract may have stamped a timestamp, filled a unit or removed
+	// something, so the message is re-encoded whenever it was touched rather
+	// than forwarding the adapter's bytes.
 	validatedData := msg.Data
+	if result.TimestampFilled || enforced || len(result.Violations) > 0 {
+		if encoded, err := json.Marshal(data); err == nil {
+			validatedData = encoded
+		}
+	}
 	if h.enricher != nil {
 		if err := h.enricher.Enrich(&data); err != nil {
 			enrichFailures.With(enrichStageEnrich).Inc()
@@ -263,6 +350,10 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 			jetStreamPublished.Inc()
 		}
 	}
+	// A partial drop still owes the operator the values it removed.
+	if enforced {
+		h.publishDeadLetter(msg, errContractPartial, result.Violations...)
+	}
 
 	// Log output
 	log.Printf("[Core] Asset: %s, Tags: %d", data.AssetID, len(data.Values))
@@ -278,7 +369,7 @@ func (h *DataHandler) HandleAssetData(msg *nats.Msg) {
 	}
 }
 
-func (h *DataHandler) publishDeadLetter(msg *nats.Msg, publishErr error) {
+func (h *DataHandler) publishDeadLetter(msg *nats.Msg, publishErr error, violations ...Violation) {
 	if h.deadLetterSubject == "" || h.js == nil {
 		return
 	}
@@ -289,6 +380,7 @@ func (h *DataHandler) publishDeadLetter(msg *nats.Msg, publishErr error) {
 		Error:           publishErr.Error(),
 		Payload:         append(json.RawMessage(nil), msg.Data...),
 		Timestamp:       time.Now().UTC(),
+		Violations:      violations,
 	}
 	data, err := json.Marshal(envelope)
 	if err != nil {

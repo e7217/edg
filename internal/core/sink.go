@@ -67,6 +67,14 @@ var (
 		Help: "Messages nakked after a failed write. Its rate is the redelivery pressure on the stream.",
 	})
 
+	// Values the encoder did not turn into a line. Numbers and flags are always
+	// written; text is written as a label (ADR 0010) unless one of these says
+	// why not.
+	sinkValuesSkipped = metrics.Default.NewCounterVec(metrics.Desc{
+		Name: "edg_core_sink_values_skipped_total",
+		Help: "Tag values not written to VictoriaMetrics, by reason. text_disabled: sink.text_values is drop. text_too_long: longer than sink.text_max_length. text_unencodable: contains a character line protocol cannot carry in a label.",
+	}, "reason", []string{sinkSkipTextDisabled, sinkSkipTextTooLong, sinkSkipTextUnencodable})
+
 	sinkWriteSeconds = metrics.Default.NewHistogram(metrics.Desc{
 		Name: "edg_core_sink_write_seconds",
 		Help: "Duration of a write to VictoriaMetrics, including the HTTP round trip. Compare the tail with sink.request_timeout. Buckets are provisional.",
@@ -103,7 +111,25 @@ const (
 	sinkFailHTTPStatus = "http_status"
 	sinkAckWritten     = "written"
 	sinkAckPoison      = "poison"
+
+	sinkSkipTextDisabled    = "text_disabled"
+	sinkSkipTextTooLong     = "text_too_long"
+	sinkSkipTextUnencodable = "text_unencodable"
 )
+
+// Sink text modes.
+const (
+	// SinkTextLabel writes a text value as edg_data_text{value="..."} 1.
+	SinkTextLabel = "label"
+	// SinkTextDrop skips text values, the behaviour before ADR 0010.
+	SinkTextDrop = "drop"
+)
+
+// encodeOptions is how appendAssetDataLines treats non-numeric values.
+type encodeOptions struct {
+	textMode      string
+	textMaxLength int
+}
 
 // errWriteRejected marks a write that reached VictoriaMetrics and came back
 // non-2xx, as opposed to one that never got there.
@@ -134,6 +160,7 @@ type VMSink struct {
 	subject       string
 	consumerName  string
 	measurement   string
+	encode        encodeOptions
 	writeURL      string
 	batchMaxSize  int
 	flushInterval time.Duration
@@ -174,6 +201,7 @@ func NewVMSink(js nats.JetStreamContext, subject string, cfg SinkConfig) (*VMSin
 		subject:       subject,
 		consumerName:  cfg.ConsumerName,
 		measurement:   cfg.Measurement,
+		encode:        encodeOptions{textMode: cfg.TextValues, textMaxLength: cfg.TextMaxLength},
 		writeURL:      writeURL,
 		batchMaxSize:  cfg.BatchMaxSize,
 		flushInterval: cfg.FlushInterval,
@@ -313,7 +341,7 @@ func (s *VMSink) encodeBatch(msgs []*nats.Msg) ([]byte, int) {
 			log.Printf("[Core] VM sink could not decode validated message: %v", err)
 			continue
 		}
-		lines += appendAssetDataLines(&buf, s.measurement, data)
+		lines += appendAssetDataLines(&buf, s.measurement, data, s.encode)
 	}
 	return buf.Bytes(), lines
 }
@@ -370,27 +398,69 @@ func buildWriteURL(base string) (string, error) {
 	return u.String(), nil
 }
 
-// appendAssetDataLines writes one InfluxDB line per numeric tag value and
-// returns the count. Adapter timestamps are epoch milliseconds (see the Go and
-// Python SDKs), so the sink emits millisecond precision. Non-numeric values
-// (text/flag) are skipped, matching the prior Telegraf behaviour.
-func appendAssetDataLines(buf *bytes.Buffer, measurement string, data AssetData) int {
+// appendAssetDataLines writes one InfluxDB line per tag value and returns the
+// count. Adapter timestamps are epoch milliseconds (see the Go and Python SDKs),
+// so the sink emits millisecond precision.
+//
+// The field name becomes the VictoriaMetrics metric suffix, so one message can
+// produce three metrics (ADR 0010):
+//
+//	edg_data_number{...}               the reading
+//	edg_data_flag{...}                 1 or 0
+//	edg_data_text{...,value="RUNNING"} 1
+//
+// VictoriaMetrics stores float samples only. A text reading is therefore a
+// label on a constant sample -- the Prometheus "info metric" shape -- which
+// keeps a state or alarm code queryable at the cost of one series per distinct
+// string. sink.text_max_length is the guard on that cost.
+func appendAssetDataLines(buf *bytes.Buffer, measurement string, data AssetData, opts encodeOptions) int {
 	metaKeys := sortedKeys(data.Metadata)
 	count := 0
 	for _, v := range data.Values {
-		if v.Number == nil {
+		var field, fieldValue, textValue string
+		switch {
+		case v.Number != nil:
+			field = "number"
+			fieldValue = strconv.FormatFloat(*v.Number, 'g', -1, 64)
+		case v.Flag != nil:
+			field = "flag"
+			fieldValue = "0"
+			if *v.Flag {
+				fieldValue = "1"
+			}
+		case v.Text != nil:
+			if reason := textSkipReason(*v.Text, opts); reason != "" {
+				sinkValuesSkipped.With(reason).Inc()
+				continue
+			}
+			field = "text"
+			fieldValue = "1"
+			textValue = *v.Text
+		default:
 			continue
 		}
+
 		buf.WriteString(escapeMeasurement(measurement))
 		writeTag(buf, "asset_id", data.AssetID)
 		writeTag(buf, "name", v.Name)
 		writeTag(buf, "unit", v.Unit)
 		writeTag(buf, "quality", v.Quality)
 		for _, k := range metaKeys {
+			// Reserved keys are removed by the data contract; this guards the
+			// warn mode, where they reach the sink. A duplicated tag key fails
+			// the whole batch at VictoriaMetrics and redelivers it forever.
+			if ReservedMetadataKeys[k] {
+				continue
+			}
 			writeTag(buf, k, data.Metadata[k])
 		}
-		buf.WriteString(" number=")
-		buf.Write(strconv.AppendFloat(nil, *v.Number, 'g', -1, 64))
+		if field == "text" {
+			writeTag(buf, "value", textValue)
+		}
+		buf.WriteByte(' ')
+		buf.WriteString(field)
+		buf.WriteByte('=')
+		buf.WriteString(fieldValue)
 		if data.Timestamp > 0 {
 			buf.WriteByte(' ')
 			buf.WriteString(strconv.FormatInt(data.Timestamp, 10))
@@ -401,16 +471,40 @@ func appendAssetDataLines(buf *bytes.Buffer, measurement string, data AssetData)
 	return count
 }
 
+// textSkipReason says why a text value cannot become a label, or "" if it can.
+func textSkipReason(text string, opts encodeOptions) string {
+	if opts.textMode == SinkTextDrop {
+		return sinkSkipTextDisabled
+	}
+	if text == "" {
+		// An empty tag value is not representable; the line would carry no
+		// value label at all and read as a different series.
+		return sinkSkipTextUnencodable
+	}
+	if opts.textMaxLength > 0 && len(text) > opts.textMaxLength {
+		return sinkSkipTextTooLong
+	}
+	if strings.ContainsAny(text, "\n\r\\") {
+		return sinkSkipTextUnencodable
+	}
+	return ""
+}
+
 var (
 	tagEscaper         = strings.NewReplacer(",", `\,`, "=", `\=`, " ", `\ `)
 	measurementEscaper = strings.NewReplacer(",", `\,`, " ", `\ `)
+	lineBreakReplacer  = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ")
 )
 
 // writeTag appends a ",key=value" pair, skipping tags with an empty key or
-// value (InfluxDB does not allow empty tag values).
+// value (InfluxDB does not allow empty tag values). A line break cannot be
+// escaped in line protocol and would split the line, so it becomes a space.
 func writeTag(buf *bytes.Buffer, key, value string) {
 	if key == "" || value == "" {
 		return
+	}
+	if strings.ContainsAny(value, "\n\r") {
+		value = lineBreakReplacer.Replace(value)
 	}
 	buf.WriteByte(',')
 	buf.WriteString(tagEscaper.Replace(key))

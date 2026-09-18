@@ -104,6 +104,7 @@ var (
 		"platform.data.deadletter",
 		"platform.meta.asset.changed",
 		"platform.meta.relation.changed",
+		"platform.meta.points.changed",
 		"platform.meta.constraints.violation",
 		"platform.alarm.impact.computed",
 		"platform.alarm.grouped",

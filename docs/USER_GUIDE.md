@@ -260,6 +260,45 @@ core process — the `expvar` name at `/debug/vars`, the `_total` name at
 See [ADR 0001](adr/0001-data-plane-reliability.md) for the reliability model and
 failure-mode tradeoffs.
 
+### Data Contract
+
+A message reaches `platform.data.validated` only if it satisfies the data
+contract ([ADR 0010](adr/0010-data-contract.md)). What is wrong is removed at
+the smallest scope, and every removal is dead-lettered with the original
+payload and a `violations` list:
+
+| Scope | Violation reasons |
+| --- | --- |
+| Message rejected | `missing_asset_id`, `no_values`, `timestamp_not_milliseconds` |
+| Value dropped, the rest published | `empty_name`, `duplicate_name`, `no_reading`, `multiple_readings`, `non_finite_number`, `type_mismatch`, `unit_mismatch` |
+| Metadata key dropped | `reserved_metadata_key` (`asset_id`, `name`, `unit`, `quality`, `value`) |
+
+`type_mismatch` and `unit_mismatch` apply only to tags master data declares — in
+the asset's point list, or failing that its template. An undeclared tag passes
+as sent. A declared unit fills in a value that has none; a *different* unit is
+refused rather than relabelled. A missing timestamp is not a violation: core
+stamps the receive time.
+
+Adapter metadata never overrides master data: if an adapter sends
+`equipment: X` and the asset's relations say `equipment: Y`, `Y` is stored and
+`edg_core_enrich_metadata_overrides_total` counts the disagreement.
+
+```yaml
+data_contract:
+  mode: enforce   # or warn: count and log violations, change nothing
+```
+
+Turn on `warn` first on a running plant to see what `enforce` would remove:
+
+| Metric | Meaning |
+| --- | --- |
+| `edg_core_data_contract_violations_total{reason}` | Each broken rule. |
+| `edg_core_data_messages_rejected_total` | Messages that did not reach validated. |
+| `edg_core_data_values_dropped_total` | Values removed from messages that did. |
+| `edg_core_data_timestamps_filled_total` | Messages stamped with receive time. |
+| `edg_core_enrich_metadata_overrides_total` | Adapter metadata corrected by master data. |
+| `edg_core_data_decode_failures_total` | Payloads that were not JSON. Dropped; there is no dead letter for bytes that cannot be quoted. |
+
 ### VictoriaMetrics Sink
 
 Core's built-in sink reads `platform.data.validated` with a durable JetStream
@@ -276,16 +315,29 @@ sink:
   flush_interval: 1s
   request_timeout: 5s
   consumer_stat_interval: 15s  # how often the backlog gauges are refreshed
+  text_values: label           # or drop: store numbers and flags only
+  text_max_length: 128         # longer text is not written (one series per distinct string)
 ```
 
-Each numeric value becomes one metric named `edg_data_number`, tagged with
-`asset_id`, `name`, `unit`, `quality`, and any enrichment metadata. Adapter
-timestamps (epoch milliseconds) are preserved.
+Every value is stored, as one of three metrics, tagged with `asset_id`, `name`,
+`unit`, `quality`, and any enrichment metadata. Adapter timestamps (epoch
+milliseconds) are preserved.
+
+| Reading | Metric | Example query |
+| --- | --- | --- |
+| `number` | `edg_data_number` | `edg_data_number{name="temperature"}` |
+| `flag` | `edg_data_flag` (1 or 0) | `edg_data_flag{name="door_open"} == 1` |
+| `text` | `edg_data_text{value="…"}` = 1 | `edg_data_text{name="state",value="FAULT"}` |
+
+VictoriaMetrics stores numbers only, so text is kept as a label on a constant
+sample. Each distinct string is a series: that suits states and alarm codes,
+not free text, which is what `text_max_length` guards.
+`edg_core_sink_values_skipped_total{reason}` counts text that was not written.
 
 Sink health is exposed on the core process at `/debug/vars` and `/metrics`:
 
 - `edg_core_sink_lines_written` — line-protocol lines, i.e. time series points,
-  not messages. Values without a numeric reading produce no line.
+  not messages. Each stored value is one line.
 - `edg_core_sink_batches_written`
 - `edg_core_sink_write_failures`
 - `edg_core_sink_decode_failures`
@@ -297,7 +349,8 @@ Sink health is exposed on the core process at `/debug/vars` and `/metrics`:
 | `edg_core_sink_consumer_pending` | Messages waiting in the stream for the sink. **A sustained climb is the single most important warning in this system**: VictoriaMetrics is slower than the plant, and the stream will eventually hit `max_bytes` and discard the oldest data. |
 | `edg_core_sink_write_seconds` | Write latency. Compare its tail with `request_timeout`. |
 | `edg_core_sink_write_failures_total{reason}` | `transport` means VictoriaMetrics was unreachable; `http_status` means it answered and refused. |
-| `edg_core_sink_messages_acked_total{outcome="poison"}` | Batches acked with nothing numeric to write. **This data is dropped, not stored.** |
+| `edg_core_sink_messages_acked_total{outcome="poison"}` | Batches acked with nothing encodable to write. **This data is dropped, not stored.** |
+| `edg_core_sink_values_skipped_total{reason}` | Text values not written: `text_disabled`, `text_too_long`, `text_unencodable`. |
 | `edg_core_sink_fetch_errors_total` | The consumer stopped delivering. Without this, that looks exactly like an idle plant. |
 | `edg_core_sink_up` | 1 while the drain loop is running. |
 
@@ -770,7 +823,8 @@ curl -s localhost:8428/api/v1/targets | jq '.data.activeTargets[] | {job: .label
 | Question | Metric |
 | --- | --- |
 | Is the gateway keeping up? | `edg_core_sink_consumer_pending` |
-| Is data being dropped before storage? | `edg_core_sink_messages_acked_total{outcome="poison"}`, `edg_core_data_values_total{kind}` (only `number` reaches VictoriaMetrics) |
+| Is data being dropped before storage? | `edg_core_data_contract_violations_total{reason}`, `edg_core_data_messages_rejected_total`, `edg_core_data_values_dropped_total`, `edg_core_sink_values_skipped_total{reason}`, `edg_core_sink_messages_acked_total{outcome="poison"}` |
+| Is an adapter out of step with master data? | `edg_core_data_contract_violations_total{reason=~"type_mismatch\|unit_mismatch"}`, `edg_core_enrich_metadata_overrides_total` |
 | Is ingest about to become a slow consumer? | `edg_core_data_handle_seconds` — if its tail approaches the interval between messages, NATS starts dropping deliveries silently |
 | Is the stream about to discard old data? | `edg_core_js_bytes` against `edg_core_js_stream_max_bytes` |
 | Is an adapter down? | `edg_core_adapters{availability}` for the fleet, `edg_core_adapter_up{adapter_id}` for one |

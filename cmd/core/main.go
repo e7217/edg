@@ -258,12 +258,21 @@ func main() {
 		enricher.RegisterMetrics(metrics.Default)
 	}
 
+	// Data contract (ADR 0010): what platform.data.validated guarantees.
+	contract := core.NewContractChecker(store, cfg.DataContract.Mode)
+	if err := contract.Start(nc); err != nil {
+		log.Fatalf("Failed to start data contract: %v", err)
+	}
+	defer contract.Stop()
+	log.Printf("[Core] Data contract mode: %s", cfg.DataContract.Mode)
+
 	dataHandler := core.NewDataHandlerWithConfig(js, store, core.DataHandlerOptions{
 		ValidatedSubject:   cfg.JetStream.ValidatedSubject,
 		DeadLetterSubject:  cfg.JetStream.DeadLetterSubject,
 		Events:             eventPublisher,
 		UnknownAssetPolicy: cfg.UnknownAssetPolicy,
 		Enricher:           enricher,
+		Contract:           contract,
 	})
 	metaHandler := core.NewMetaHandlerWithOptions(store, loader, core.MetaHandlerOptions{
 		Events:                eventPublisher,

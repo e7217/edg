@@ -66,7 +66,7 @@ func TestHandleAssetData_WithJetStream(t *testing.T) {
 	tempValue := 25.5
 	data := &AssetData{
 		AssetID:   "sensor-001",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values: []TagValue{
 			{Name: "temperature", Number: &tempValue, Unit: "celsius", Quality: "good"},
 		},
@@ -121,7 +121,7 @@ func TestHandleAssetData_WithJetStreamAndStore(t *testing.T) {
 	tempValue := 25.5
 	data := &AssetData{
 		AssetID:   "new-sensor",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values: []TagValue{
 			{Name: "temperature", Number: &tempValue, Unit: "celsius"},
 		},
@@ -175,7 +175,7 @@ func TestHandleAssetData_WithEnricherPublishesMetadata(t *testing.T) {
 	tempValue := 25.5
 	data := &AssetData{
 		AssetID:   "sensor-001",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values: []TagValue{
 			{Name: "temperature", Number: &tempValue, Unit: "celsius"},
 		},
@@ -224,7 +224,7 @@ func TestHandleAssetData_PassThroughPublishesValidatedData(t *testing.T) {
 	tempValue := 25.5
 	data := &AssetData{
 		AssetID:   "manual-jetstream-sensor",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values: []TagValue{
 			{Name: "temperature", Number: &tempValue, Unit: "celsius"},
 		},
@@ -344,7 +344,7 @@ func TestHandleAssetData_JetStreamPublishError(t *testing.T) {
 
 	data := &AssetData{
 		AssetID:   "sensor-001",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values:    []TagValue{{Name: "temp", Number: new(float64)}},
 	}
 
@@ -382,7 +382,7 @@ func TestHandleAssetData_PublishErrorDeadLettersMessage(t *testing.T) {
 
 	data := &AssetData{
 		AssetID:   "sensor-001",
-		Timestamp: 1234567890,
+		Timestamp: 1700000000000,
 		Values:    []TagValue{{Name: "temp", Number: new(float64)}},
 	}
 

@@ -30,7 +30,7 @@ func TestAppendAssetDataLines_Basic(t *testing.T) {
 		Values: []TagValue{
 			{Name: "temperature", Number: floatPtr(25.5), Unit: "celsius", Quality: "good"},
 		},
-	})
+	}, labelText)
 
 	assert.Equal(t, 1, n)
 	assert.Equal(t,
@@ -39,20 +39,85 @@ func TestAppendAssetDataLines_Basic(t *testing.T) {
 	)
 }
 
-func TestAppendAssetDataLines_SkipsNonNumericValues(t *testing.T) {
+// labelText is the default encoding: text as a label (ADR 0010).
+var labelText = encodeOptions{textMode: SinkTextLabel, textMaxLength: DefaultSinkTextMaxLength}
+
+func boolPtr(v bool) *bool { return &v }
+
+// Before ADR 0010 the sink wrote numbers only, so a machine state reported as
+// text or a door switch reported as a flag was acked and never stored.
+func TestAppendAssetDataLines_WritesEveryValueKind(t *testing.T) {
 	var buf bytes.Buffer
 	n := appendAssetDataLines(&buf, "edg_data", AssetData{
-		AssetID: "sensor-001",
+		AssetID:   "sensor-001",
+		Timestamp: 1700000000000,
 		Values: []TagValue{
-			{Name: "label", Text: strPtr("running"), Quality: "good"},
-			{Name: "online", Flag: func() *bool { b := true; return &b }(), Quality: "good"},
+			{Name: "state", Text: strPtr("RUNNING"), Quality: "good"},
+			{Name: "online", Flag: boolPtr(true), Quality: "good"},
+			{Name: "door", Flag: boolPtr(false), Quality: "good"},
 			{Name: "temperature", Number: floatPtr(10), Quality: "good"},
 		},
-	})
+	}, labelText)
 
-	assert.Equal(t, 1, n)
-	assert.Contains(t, buf.String(), "name=temperature")
-	assert.NotContains(t, buf.String(), "label")
+	assert.Equal(t, 4, n)
+	assert.Equal(t,
+		"edg_data,asset_id=sensor-001,name=state,quality=good,value=RUNNING text=1 1700000000000\n"+
+			"edg_data,asset_id=sensor-001,name=online,quality=good flag=1 1700000000000\n"+
+			"edg_data,asset_id=sensor-001,name=door,quality=good flag=0 1700000000000\n"+
+			"edg_data,asset_id=sensor-001,name=temperature,quality=good number=10 1700000000000\n",
+		buf.String())
+}
+
+func TestAppendAssetDataLines_TextSkipReasons(t *testing.T) {
+	cases := []struct {
+		name   string
+		text   string
+		opts   encodeOptions
+		reason string
+	}{
+		{"drop mode", "RUNNING", encodeOptions{textMode: SinkTextDrop}, sinkSkipTextDisabled},
+		{"too long", strings.Repeat("x", 9), encodeOptions{textMode: SinkTextLabel, textMaxLength: 8}, sinkSkipTextTooLong},
+		{"line break", "a\nb", labelText, sinkSkipTextUnencodable},
+		{"backslash", `a\`, labelText, sinkSkipTextUnencodable},
+		{"empty", "", labelText, sinkSkipTextUnencodable},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			before := vecValue(t, "edg_core_sink_values_skipped_total", "reason", tc.reason)
+			var buf bytes.Buffer
+			n := appendAssetDataLines(&buf, "edg_data", AssetData{
+				AssetID: "s1",
+				Values:  []TagValue{{Name: "state", Text: strPtr(tc.text), Quality: "good"}},
+			}, tc.opts)
+			assert.Equal(t, 0, n)
+			assert.Empty(t, buf.String())
+			assert.Equal(t, before+1, vecValue(t, "edg_core_sink_values_skipped_total", "reason", tc.reason))
+		})
+	}
+}
+
+// A reserved key in metadata reaches the sink only in warn mode. Written, it
+// would duplicate a tag key; VictoriaMetrics would reject the batch and the
+// sink would redeliver it forever.
+func TestAppendAssetDataLines_SkipsReservedMetadataKeys(t *testing.T) {
+	var buf bytes.Buffer
+	appendAssetDataLines(&buf, "edg_data", AssetData{
+		AssetID:  "s1",
+		Metadata: map[string]string{"name": "spoof", "value": "x", "line": "L1"},
+		Values:   []TagValue{{Name: "t", Number: floatPtr(1), Quality: "good"}},
+	}, labelText)
+	assert.Equal(t, "edg_data,asset_id=s1,name=t,quality=good,line=L1 number=1\n", buf.String())
+}
+
+func TestAppendAssetDataLines_LineBreakInMetadataBecomesSpace(t *testing.T) {
+	var buf bytes.Buffer
+	appendAssetDataLines(&buf, "edg_data", AssetData{
+		AssetID:  "s1",
+		Metadata: map[string]string{"line": "L\n1"},
+		Values:   []TagValue{{Name: "t", Number: floatPtr(1), Quality: "good"}},
+	}, labelText)
+	assert.Equal(t, 1, strings.Count(buf.String(), "\n"))
+	assert.Contains(t, buf.String(), `line=L\ 1`)
 }
 
 func TestAppendAssetDataLines_ZeroTimestampOmitted(t *testing.T) {
@@ -60,7 +125,7 @@ func TestAppendAssetDataLines_ZeroTimestampOmitted(t *testing.T) {
 	appendAssetDataLines(&buf, "edg_data", AssetData{
 		AssetID: "s1",
 		Values:  []TagValue{{Name: "t", Number: floatPtr(1), Quality: "good"}},
-	})
+	}, labelText)
 	// No trailing timestamp: line ends right after the field.
 	assert.Equal(t, "edg_data,asset_id=s1,name=t,quality=good number=1\n", buf.String())
 }
@@ -70,7 +135,7 @@ func TestAppendAssetDataLines_EmptyTagValuesSkipped(t *testing.T) {
 	appendAssetDataLines(&buf, "edg_data", AssetData{
 		AssetID: "s1",
 		Values:  []TagValue{{Name: "t", Number: floatPtr(1), Unit: "", Quality: "good"}},
-	})
+	}, labelText)
 	// Empty unit must not produce a "unit=" tag.
 	assert.NotContains(t, buf.String(), "unit=")
 }
@@ -80,7 +145,7 @@ func TestAppendAssetDataLines_EscapesSpecialChars(t *testing.T) {
 	appendAssetDataLines(&buf, "edg_data", AssetData{
 		AssetID: "asset 1,a=b",
 		Values:  []TagValue{{Name: "temp value", Number: floatPtr(1), Quality: "good"}},
-	})
+	}, labelText)
 	out := buf.String()
 	assert.Contains(t, out, `asset_id=asset\ 1\,a\=b`)
 	assert.Contains(t, out, `name=temp\ value`)
@@ -92,7 +157,7 @@ func TestAppendAssetDataLines_MetadataSortedTags(t *testing.T) {
 		AssetID:  "s1",
 		Metadata: map[string]string{"line": "L1", "factory": "F1"},
 		Values:   []TagValue{{Name: "t", Number: floatPtr(1), Quality: "good"}},
-	})
+	}, labelText)
 	// Metadata tags appear in deterministic sorted order (factory before line).
 	assert.Contains(t, buf.String(), "factory=F1,line=L1 number=1")
 }

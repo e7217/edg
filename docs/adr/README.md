@@ -13,6 +13,7 @@ operator expectations, or compatibility.
 - [ADR 0007: NATS Subject Authorization](0007-nats-subject-authorization.md)
 - [ADR 0008: Adapter Runtime Status](0008-adapter-runtime-status.md)
 - [ADR 0009: Prometheus Metrics](0009-prometheus-metrics.md)
+- [ADR 0010: The Data Contract of `platform.data.validated`](0010-data-contract.md)
 
 ## Format
 
