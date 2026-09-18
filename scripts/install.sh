@@ -168,7 +168,7 @@ Description=EDG VictoriaMetrics
 After=network.target
 
 [Service]
-ExecStart=$INSTALL_DIR/bin/victoria-metrics-prod -storageDataPath=$INSTALL_DIR/data/victoria-metrics -retentionPeriod=1y
+ExecStart=$INSTALL_DIR/bin/victoria-metrics-prod -storageDataPath=$INSTALL_DIR/data/victoria-metrics -retentionPeriod=1y -dedup.minScrapeInterval=1ms
 WorkingDirectory=$INSTALL_DIR
 Restart=always
 RestartSec=5

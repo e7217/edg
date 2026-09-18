@@ -260,6 +260,26 @@ core process — the `expvar` name at `/debug/vars`, the `_total` name at
 See [ADR 0001](adr/0001-data-plane-reliability.md) for the reliability model and
 failure-mode tradeoffs.
 
+What `scripts/e2e-storage.sh` verifies on every CI run, with the real binary and
+a real VictoriaMetrics, sample by sample:
+
+| Situation | Result |
+| --- | --- |
+| 1,000 messages × 3 values | exactly 3,000 samples, every value and timestamp as published |
+| VictoriaMetrics down while data arrives | backlog held in JetStream, written in full when it returns |
+| VictoriaMetrics down **and** core restarted | backlog resumes from the durable consumer after restart |
+| the same reading delivered twice | stored once |
+
+Two settings make the last two rows true, and both are shipped:
+
+- **VictoriaMetrics runs with `-dedup.minScrapeInterval=1ms`.** Delivery is
+  at-least-once, so a batch whose ack was lost is written again; without the
+  flag VictoriaMetrics stores the repeat as a second sample. If you run your own
+  VictoriaMetrics, pass it.
+- **The sink's consumer redelivers after twice `sink.request_timeout`** (at
+  least 5s) rather than JetStream's 30s default. That is the longest a batch
+  in flight when core was killed waits before it is written.
+
 ### Data Contract
 
 A message reaches `platform.data.validated` only if it satisfies the data

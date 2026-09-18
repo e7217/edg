@@ -16,6 +16,11 @@ services:
     command:
       - "-storageDataPath=/victoria-metrics-data"
       - "-retentionPeriod=1y"
+      # The sink is at-least-once (ADR 0001): a batch whose ack is lost is
+      # written again. Without deduplication VictoriaMetrics stores the
+      # repeated sample twice; test/e2e measures this. 1ms keeps one sample
+      # per series per millisecond, which is the timestamp precision.
+      - "-dedup.minScrapeInterval=1ms"
       - "-httpListenAddr=:8428"
       # Built-in Prometheus-compatible scraper (ADR 0009). It pulls edg-core's
       # operational metrics; the plant's telemetry still arrives over the

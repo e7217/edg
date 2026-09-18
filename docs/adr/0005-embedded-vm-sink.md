@@ -88,6 +88,10 @@ consistent with the product's single-binary promise.
   JetStream backlog after downtime, and acks follow the write.
 - At-least-once delivery can produce duplicate writes on retry; VictoriaMetrics
   is idempotent for an identical (metric, label set, timestamp), so this is safe.
+  **Correction (2026-09-18):** it is not, by default. VictoriaMetrics keeps every
+  raw sample unless `-dedup.minScrapeInterval` is set, and `test/e2e` measured a
+  repeated reading stored twice. Every shipped deployment now passes
+  `-dedup.minScrapeInterval=1ms`, and the e2e run fails if one stops doing so.
 - Tag cardinality is now controlled directly in core. Per ADR 0002, enrichment
   keys are intentionally low-cardinality; operators should still watch series
   growth via vmui's cardinality explorer. A metadata allowlist is deferred until

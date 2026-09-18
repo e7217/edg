@@ -160,15 +160,19 @@ echo ""
 echo -e "${YELLOW}Querying VictoriaMetrics...${NC}"
 sleep 2
 
-QUERY_RESULT=$(curl -s "http://localhost:8428/api/v1/query?query=edg_data_number" | grep -o '"status":"success"' || echo "")
+# Count the stored samples rather than trusting "status":"success", which an
+# empty result also returns. 5 sensors x 2 values were published. For the full
+# sample-by-sample check see scripts/e2e-storage.sh.
+curl -s "http://localhost:8428/internal/force_flush" > /dev/null
+EXPECTED=10
+STORED=$(curl -s "http://localhost:8428/api/v1/export?match[]=edg_data_number" \
+  | grep -o '"values":\[[^]]*\]' | tr ',' '\n' | grep -c '[0-9]' || true)
 
-if [ -n "$QUERY_RESULT" ]; then
-    echo -e "${GREEN}✓ VictoriaMetrics is receiving data${NC}"
-    echo ""
-    echo "Sample query:"
-    curl -s "http://localhost:8428/api/v1/query?query=edg_data_number" | jq '.'
+if [ "$STORED" -eq "$EXPECTED" ]; then
+    echo -e "${GREEN}✓ VictoriaMetrics stored ${STORED}/${EXPECTED} samples${NC}"
 else
-    echo -e "${YELLOW}⚠ No data found yet (might need more time)${NC}"
+    echo -e "${YELLOW}✗ VictoriaMetrics stored ${STORED}/${EXPECTED} samples${NC}"
+    PIPELINE_FAILED=1
 fi
 
 echo ""
@@ -204,4 +208,8 @@ echo "$CORE_PID $VM_PID" > /tmp/edg-pids.txt
 
 echo "PIDs saved to /tmp/edg-pids.txt"
 echo ""
+if [ -n "${PIPELINE_FAILED:-}" ]; then
+    echo "Test pipeline FAILED: stored sample count does not match what was published."
+    exit 1
+fi
 echo -e "${GREEN}Test pipeline completed!${NC}"
