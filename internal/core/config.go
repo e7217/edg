@@ -138,6 +138,15 @@ type StorageConfig struct {
 	DataDir       string `yaml:"data_dir"`
 	MigrationsDir string `yaml:"migrations_dir"`
 	AutoMigrate   bool   `yaml:"auto_migrate"`
+	// JournalMode is "wal" (default) or "delete", SQLite's rollback journal.
+	// Under the rollback journal a reader blocks the writer; measured, that
+	// cost reads 292x throughput. See docs/perf/sqlite-journal-mode.md.
+	JournalMode string `yaml:"journal_mode"`
+	// Synchronous is "full" (default), "normal" or "off". WAL with full keeps
+	// today's durability; normal drops one fsync per commit -- faster writes
+	// and less SD-card wear, at the cost of losing the last commits on power
+	// loss. It is a deliberate choice, not a default.
+	Synchronous string `yaml:"synchronous"`
 }
 
 type TemplateConfig struct {
@@ -234,6 +243,8 @@ func DefaultCoreConfig() CoreConfig {
 			DataDir:       "./data",
 			MigrationsDir: "embedded",
 			AutoMigrate:   true,
+			JournalMode:   JournalModeWAL,
+			Synchronous:   SynchronousFull,
 		},
 		Templates: TemplateConfig{
 			Dir: "./templates",
@@ -373,6 +384,12 @@ func (c *CoreConfig) applyDefaults() {
 	if c.Storage.MigrationsDir == "" {
 		c.Storage.MigrationsDir = defaults.Storage.MigrationsDir
 	}
+	if c.Storage.JournalMode == "" {
+		c.Storage.JournalMode = defaults.Storage.JournalMode
+	}
+	if c.Storage.Synchronous == "" {
+		c.Storage.Synchronous = defaults.Storage.Synchronous
+	}
 	if c.Templates.Dir == "" {
 		c.Templates.Dir = defaults.Templates.Dir
 	}
@@ -439,6 +456,16 @@ func (c *SinkConfig) applyDefaults(defaults SinkConfig) {
 }
 
 func (c CoreConfig) validate() error {
+	switch c.Storage.JournalMode {
+	case JournalModeWAL, JournalModeDelete:
+	default:
+		return fmt.Errorf("invalid storage.journal_mode: %q (allowed: wal, delete)", c.Storage.JournalMode)
+	}
+	switch c.Storage.Synchronous {
+	case SynchronousFull, SynchronousNormal, SynchronousOff:
+	default:
+		return fmt.Errorf("invalid storage.synchronous: %q (allowed: full, normal, off)", c.Storage.Synchronous)
+	}
 	switch c.UnknownAssetPolicy {
 	case UnknownAssetPolicyPassThrough, UnknownAssetPolicyDeadLetter:
 	default:

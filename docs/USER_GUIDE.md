@@ -113,6 +113,12 @@ its `edg-data` volume at `/opt/edg/data`. **Back that directory up and you have
 the gateway's configuration and its in-flight data**: master data, the
 JetStream backlog and the NATS role credentials.
 
+> **Copy the whole directory, not `metadata.db` alone.** SQLite runs in WAL
+> mode (see [journal mode](perf/sqlite-journal-mode.md)), so recent commits sit
+> in `metadata.db-wal` until a checkpoint — and that file is still there after
+> a crash, which is when a backup matters most. `edg-core -export-plant` is the
+> alternative that needs no file-level care at all.
+
 It is not a complete backup. The measurements themselves live in
 VictoriaMetrics, which is a separate `vm-data` volume in the compose stack and
 `/opt/edg/data/victoria-metrics` in a host install. Back up both, or you keep
@@ -135,6 +141,18 @@ recreate. CI runs the same script.
   (default `./templates/`) is **seed-imported on first boot** when the DB has no
   templates, and is the default target for the import/export commands below.
 - **Config file**: set `EDG_CORE_CONFIG` or pass `--config` to choose a core YAML file.
+- **SQLite concurrency**: the database runs in WAL mode so a read and a write
+  do not block each other. Measured, the rollback journal cost reads 472× the
+  throughput and a p99 of two seconds under a provisioning write; see
+  [journal mode](perf/sqlite-journal-mode.md).
+
+```yaml
+storage:
+  journal_mode: wal   # or delete, SQLite's rollback journal
+  synchronous: full   # or normal: one fsync fewer per commit -- faster writes
+                      # and less SD-card wear, at the cost of losing the last
+                      # commits (never the database) on power loss
+```
 
 ### Adapter Runtime Status
 
