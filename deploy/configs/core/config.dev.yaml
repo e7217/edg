@@ -22,6 +22,11 @@ storage:
   data_dir: ./data
   migrations_dir: embedded
   auto_migrate: true
+  # WAL lets readers run while the writer commits; the rollback journal does
+  # not (docs/perf/sqlite-journal-mode.md). synchronous: normal trades the last
+  # commits on power loss for fewer fsyncs -- a deliberate choice on SD cards.
+  journal_mode: wal
+  synchronous: full
 
 templates:
   dir: ./templates

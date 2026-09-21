@@ -448,3 +448,23 @@ func TestCoreConfig_CredentialsFileEnvOverride(t *testing.T) {
 	assert.Equal(t, "/run/secrets/edg-nats.json", cfg.NATSCredentialsFile(),
 		"container orchestrators inject the path by environment, matching EDG_SINK_URL")
 }
+
+// A deployment gets WAL unless it says otherwise: the rollback journal made a
+// read wait on a write (docs/perf/sqlite-journal-mode.md).
+func TestStorageJournalDefaults(t *testing.T) {
+	cfg := DefaultCoreConfig()
+	assert.Equal(t, JournalModeWAL, cfg.Storage.JournalMode)
+	assert.Equal(t, SynchronousFull, cfg.Storage.Synchronous,
+		"the default must not quietly lower durability")
+
+	var empty CoreConfig
+	empty.applyDefaults()
+	assert.Equal(t, JournalModeWAL, empty.Storage.JournalMode)
+
+	bad := DefaultCoreConfig()
+	bad.Storage.JournalMode = "memory"
+	assert.ErrorContains(t, bad.validate(), "storage.journal_mode")
+	bad = DefaultCoreConfig()
+	bad.Storage.Synchronous = "sometimes"
+	assert.ErrorContains(t, bad.validate(), "storage.synchronous")
+}

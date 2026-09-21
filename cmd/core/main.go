@@ -255,7 +255,7 @@ func main() {
 	}
 
 	// 4. Initialize metadata store
-	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	store, err := core.NewStoreWithOptions(cfg.Storage.MetadataDB, core.StoreOptionsFrom(cfg.Storage))
 	if err != nil {
 		log.Fatalf("Failed to create store: %v", err)
 	}
@@ -445,7 +445,7 @@ func main() {
 const shutdownDrainTimeout = 5 * time.Second
 
 func checkConstraints(cfg core.CoreConfig) (core.ConstraintsReport, error) {
-	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	store, err := core.NewStoreWithOptions(cfg.Storage.MetadataDB, core.StoreOptionsFrom(cfg.Storage))
 	if err != nil {
 		return core.ConstraintsReport{}, err
 	}
@@ -467,7 +467,7 @@ func checkConstraints(cfg core.CoreConfig) (core.ConstraintsReport, error) {
 // pointService opens the metadata store and builds the service the point-list
 // CLI paths write through, so file import obeys the same validation as the API.
 func pointService(cfg core.CoreConfig) (*core.MetadataService, func(), error) {
-	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	store, err := core.NewStoreWithOptions(cfg.Storage.MetadataDB, core.StoreOptionsFrom(cfg.Storage))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -584,7 +584,7 @@ func copyFile(src, dst string) error {
 }
 
 func runImportTemplates(cfg core.CoreConfig, dir string) error {
-	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	store, err := core.NewStoreWithOptions(cfg.Storage.MetadataDB, core.StoreOptionsFrom(cfg.Storage))
 	if err != nil {
 		return err
 	}
@@ -602,7 +602,7 @@ func runImportTemplates(cfg core.CoreConfig, dir string) error {
 }
 
 func runExportTemplates(cfg core.CoreConfig, dir string) error {
-	store, err := core.NewStoreWithMigrations(cfg.Storage.MetadataDB, cfg.Storage.AutoMigrate)
+	store, err := core.NewStoreWithOptions(cfg.Storage.MetadataDB, core.StoreOptionsFrom(cfg.Storage))
 	if err != nil {
 		return err
 	}

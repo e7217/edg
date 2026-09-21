@@ -22,15 +22,59 @@ func NewStore(dbPath string) (*Store, error) {
 	return NewStoreWithMigrations(dbPath, true)
 }
 
+// StoreOptions are the SQLite settings a deployment may choose.
+type StoreOptions struct {
+	AutoMigrate bool
+	// JournalMode is "wal" or "delete" (SQLite's rollback journal). Empty
+	// means the default; see docs/perf/sqlite-journal-mode.md for the
+	// measurement behind it.
+	JournalMode string
+	// Synchronous is "full", "normal" or "off". Empty leaves SQLite's default
+	// for the journal mode in place.
+	Synchronous string
+}
+
+// Journal modes.
+const (
+	JournalModeWAL    = "wal"
+	JournalModeDelete = "delete"
+)
+
+// Synchronous levels.
+const (
+	SynchronousFull   = "full"
+	SynchronousNormal = "normal"
+	SynchronousOff    = "off"
+)
+
+// StoreOptionsFrom builds store options from a deployment's storage config.
+func StoreOptionsFrom(cfg StorageConfig) StoreOptions {
+	return StoreOptions{
+		AutoMigrate: cfg.AutoMigrate,
+		JournalMode: cfg.JournalMode,
+		Synchronous: cfg.Synchronous,
+	}
+}
+
+// NewStoreWithOptions creates a Store with explicit SQLite settings.
+func NewStoreWithOptions(dbPath string, opts StoreOptions) (*Store, error) {
+	return newStore(dbPath, opts)
+}
+
 // NewStoreWithMigrations creates a Store and optionally applies embedded migrations.
 func NewStoreWithMigrations(dbPath string, autoMigrate bool) (*Store, error) {
+	return newStore(dbPath, StoreOptions{AutoMigrate: autoMigrate})
+}
+
+func newStore(dbPath string, opts StoreOptions) (*Store, error) {
+	autoMigrate := opts.AutoMigrate
 	// Create data directory if not exists
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", withForeignKeys(dbPath))
+	db, err := sql.Open("sqlite3", dsn(dbPath, opts))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open DB: %w", err)
 	}
@@ -65,6 +109,26 @@ func NewStoreWithMigrations(dbPath string, autoMigrate bool) (*Store, error) {
 // cascade fired or did not depending on which connection the delete landed on.
 // Measured before this change: two of eight concurrent reads of the pragma
 // returned 0.
+// dsn builds the connection string. Every setting lives here rather than in a
+// PRAGMA statement, because a PRAGMA applies only to whichever pooled
+// connection happens to serve it.
+func dsn(dbPath string, opts StoreOptions) string {
+	params := baseParams
+	if opts.JournalMode != "" {
+		params += "&_journal_mode=" + opts.JournalMode
+	}
+	if opts.Synchronous != "" {
+		params += "&_synchronous=" + opts.Synchronous
+	}
+	if strings.Contains(dbPath, "?") {
+		return dbPath + "&" + params
+	}
+	return dbPath + "?" + params
+}
+
+// baseParams are the settings every deployment gets.
+const baseParams = "_foreign_keys=on&_busy_timeout=5000"
+
 func withForeignKeys(dbPath string) string {
 	// _busy_timeout is here for the same reason. Reads that span more than one
 	// statement -- a point list and its points, a template and its resources --
@@ -72,7 +136,7 @@ func withForeignKeys(dbPath string) string {
 	// applied. Under the default rollback journal a reader's shared lock blocks
 	// a writer, so without a timeout the loser gets `database is locked`
 	// immediately instead of waiting for a transaction that takes milliseconds.
-	params := "_foreign_keys=on&_busy_timeout=5000"
+	params := baseParams
 	if strings.Contains(dbPath, "?") {
 		return dbPath + "&" + params
 	}
@@ -610,4 +674,16 @@ func (s *Store) DeleteRelation(id string) error {
 		return fmt.Errorf("relation not found: %s", id)
 	}
 	return nil
+}
+
+// JournalMode reports the journal mode the database is actually in. It is a
+// property of the file, not of the DSN: a request for WAL on a :memory:
+// database is silently ignored, which is exactly the difference that makes an
+// in-memory test unable to speak for production.
+func (s *Store) JournalMode() (string, error) {
+	var mode string
+	if err := s.db.QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
+		return "", err
+	}
+	return strings.ToLower(mode), nil
 }
