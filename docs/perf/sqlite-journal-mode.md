@@ -73,6 +73,22 @@ after a crash, which is exactly when a backup matters. Either:
   core stopped; or
 - `sqlite3 metadata.db ".backup backup.db"` while it runs.
 
+## The driver changed with it
+
+The numbers above were taken with the cgo driver. EDG now uses
+`modernc.org/sqlite`, SQLite transpiled to Go, so that a cross-compiled binary
+works at all (#79). Same bench, same machine:
+
+| | reads/s | read p99 | writes/s |
+| --- | ---: | ---: | ---: |
+| cgo, wal/full | 25,476 | 1.4 ms | 684 |
+| pure Go, wal/full | 19,888 | 1.9 ms | 501 |
+| pure Go, delete/full | 294 | 333 ms | 351 |
+
+About 22% fewer reads and 27% fewer writes, and 1.7 MB more binary. Against the
+rollback journal it is still 68× the reads, and it is the difference between a
+binary that runs on an ARM board and one that exits at startup.
+
 ## Not measured
 
 SD-card and eMMC write amplification, which is the real argument for

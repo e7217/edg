@@ -3,8 +3,8 @@ FROM golang:1.24-bookworm AS builder
 
 WORKDIR /build
 
-# Install build dependencies for CGO (required for sqlite)
-RUN apt-get update && apt-get install -y gcc
+# No build dependencies: the SQLite driver is pure Go (#79), so this image
+# needs no gcc and the binary is static.
 
 # Copy go mod files
 COPY go.mod go.sum ./
@@ -13,8 +13,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application with CGO enabled for sqlite
-RUN CGO_ENABLED=1 GOOS=linux go build -a -o edg-core ./cmd/core
+# CGO_ENABLED=0 explicitly: cross-compilation turns it off anyway, and a cgo
+# SQLite driver would then compile to a stub that fails at first use.
+RUN CGO_ENABLED=0 GOOS=linux go build -a -o edg-core ./cmd/core
 
 # Final stage
 FROM debian:bookworm-slim

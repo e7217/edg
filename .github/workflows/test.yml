@@ -138,6 +138,63 @@ jobs:
             exit 1
           fi
 
+  cross-build:
+    name: Cross-compiled binaries run
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: docker/setup-qemu-action@v3
+
+      # Cross-compilation disables cgo by itself, and a cgo SQLite driver then
+      # compiles to a stub that builds, links and dies at first use. Three of
+      # the four v0.2.0 release binaries were that stub (#79). Building is not
+      # evidence; this asserts the stub is absent and then runs the arm64
+      # binary under emulation.
+      - name: Build every release target with CGO_ENABLED=0
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in linux/amd64 linux/arm64 darwin/amd64 windows/amd64; do
+            goos=${target%/*}; goarch=${target#*/}; ext=""
+            [ "$goos" = windows ] && ext=.exe
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -o "dist/edg-core-$goos-$goarch$ext" ./cmd/core
+            if strings "dist/edg-core-$goos-$goarch$ext" | grep -q "requires cgo to work"; then
+              echo "::error::$target built a cgo stub; it would fail at startup opening the database"
+              exit 1
+            fi
+            echo "ok: $target"
+          done
+
+      - name: The arm64 binary starts and serves on an arm64 machine
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 -v "$PWD/dist:/w" alpine:3 sh -c '
+            set -e
+            uname -m
+            mkdir -p /tmp/d
+            cat > /tmp/c.yaml <<YAML
+          nats: {host: 127.0.0.1, port: 4222, http_host: 127.0.0.1, http_port: 8222, auth: {mode: off}, store_dir: /tmp/d/js}
+          storage: {metadata_db: /tmp/d/m.db, data_dir: /tmp/d, migrations_dir: embedded, auto_migrate: true}
+          templates: {dir: /tmp/none}
+          http: {enabled: true, address: 127.0.0.1:8080, token_env: T}
+          sink: {enabled: false}
+          YAML
+            /w/edg-core-linux-arm64 -config /tmp/c.yaml > /tmp/out.log 2>&1 &
+            for i in $(seq 1 120); do
+              wget -q -O /dev/null http://127.0.0.1:8080/api/v1/health && ok=1 && break
+              sleep 0.5
+            done
+            [ "${ok:-}" = 1 ] || { echo "arm64 core never became healthy:"; cat /tmp/out.log; exit 1; }
+            echo "arm64 core answered /api/v1/health"
+          '
+
   compose-smoke:
     name: Compose stack
     runs-on: ubuntu-latest

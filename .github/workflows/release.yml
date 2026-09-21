@@ -63,6 +63,11 @@ jobs:
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          # Explicit, because it is what the cross-compiled targets get by
+          # default and the build must be identical on all four. With a cgo
+          # SQLite driver this silently produced a stub binary that started
+          # NATS and then died opening the database (#79).
+          CGO_ENABLED: "0"
         run: |
           BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           go build \
@@ -166,3 +171,35 @@ jobs:
           done <<< "$expected"
           [ $missing -eq 0 ] || exit 1
           echo "all four platform archives are attached"
+
+      # Presence is not enough. v0.2.0 shipped three archives whose binary was
+      # the cgo driver's stub: it built, it was attached, and it died at
+      # startup on "requires cgo to work" (#79). Every binary is now opened and
+      # checked, and the runner's own platform is executed.
+      - name: Every binary is a working build, not a cgo stub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/verify && cd /tmp/verify
+          gh release download "${{ inputs.tag }}" --repo "${{ github.repository }}" --clobber
+          fail=0
+          for archive in *.tar.gz; do
+            dir="${archive%.tar.gz}"; mkdir -p "$dir"; tar xzf "$archive" -C "$dir"
+          done
+          for zip in *.zip; do
+            dir="${zip%.zip}"; mkdir -p "$dir"; unzip -qo "$zip" -d "$dir"
+          done
+          while read -r bin; do
+            if strings "$bin" | grep -q "requires cgo to work"; then
+              echo "::error::$bin is a cgo stub: it will fail at startup opening the database"
+              fail=1
+            else
+              echo "ok: $bin"
+            fi
+          done < <(find . -type f -name 'edg-core' -o -type f -name 'edg-core.exe')
+          [ $fail -eq 0 ] || exit 1
+
+          native=$(find . -path '*linux-amd64*' -name edg-core | head -1)
+          chmod +x "$native"
+          "$native" -version

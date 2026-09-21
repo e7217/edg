@@ -15,7 +15,7 @@ func TestRunMigrationsCreatesSchema(t *testing.T) {
 
 	require.NoError(t, RunMigrations(dbPath))
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteDriver, withForeignKeys(dbPath))
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -34,7 +34,7 @@ func TestRunMigrationsCreatesSchema(t *testing.T) {
 }
 
 func TestRunMigrationsPreservesV1Data(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(sqliteDriver, ":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 
@@ -62,7 +62,7 @@ func TestRunMigrationsPreservesV1Data(t *testing.T) {
 }
 
 func TestMigrationDownSteps(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open(sqliteDriver, ":memory:")
 	require.NoError(t, err)
 	defer db.Close()
 

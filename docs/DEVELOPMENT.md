@@ -4,6 +4,10 @@ This guide is for developers who want to build, test, and contribute to the EDG 
 
 ## Prerequisites
 
+> No C toolchain is needed. The SQLite driver is pure Go, so
+> `CGO_ENABLED=0 GOOS=... GOARCH=... go build ./cmd/core` produces a working
+> binary for any target ([#79](https://github.com/e7217/edg/issues/79)).
+
 - Go 1.21 or later
 - Git
 
