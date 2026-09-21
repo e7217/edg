@@ -9,7 +9,20 @@ EDG ships two SDKs that wrap the NATS subject contract described below:
 - **Python** — [`adapters/python/sdk`](../adapters/python/sdk)
 - **Go** — [`adapters/go/sdk`](../adapters/go/sdk)
 
-Both SDKs cover the same surface (asset data publish, asset and relation CRUD, metadata change event subscription, device connect/reconnect hooks) and use the same wire format. Pick whichever fits your toolchain — adapters can also talk to the subjects directly without an SDK.
+Both SDKs cover the same surface (asset data publish, asset and relation CRUD, metadata change event subscription, device connect/reconnect hooks, and provisioning from a declared point list) and use the same wire format. Pick whichever fits your toolchain — adapters can also talk to the subjects directly without an SDK.
+
+Four reference adapters are included, each of which can take what it reads from
+master data instead of a local file ([ADR 0011](adr/0011-point-distribution.md)):
+
+| Protocol | Example | Language |
+| --- | --- | --- |
+| Modbus TCP | [`modbus_tcp_sensor`](../adapters/go/sdk/examples/modbus_tcp_sensor), [`modbus_tcp`](../adapters/python/examples/modbus_tcp) | Go, Python |
+| Modbus RTU (serial) | [`modbus_tcp_sensor`](../adapters/go/sdk/examples/modbus_tcp_sensor) with `transport: rtu` | Go |
+| OPC UA | [`opcua_sensor`](../adapters/go/sdk/examples/opcua_sensor) | Go |
+| MELSEC MC (3E) | [`melsec_mc_sensor`](../adapters/go/sdk/examples/melsec_mc_sensor) | Go |
+
+None has been run against physical hardware yet; they are tested against
+simulators and, for MELSEC, against the published frame encoding.
 
 ## Connecting
 

@@ -31,7 +31,8 @@
 *   **Relationship-Aware Enrichment**: Validated data can carry ancestor tags derived from asset relations for line, area, and factory-level queries.
 *   **Data Contract**: A message reaches `platform.data.validated` only if it is well-formed and agrees with master data — declared value types and units, master data over adapter metadata. What fails is removed at the smallest scope (message, value, key), counted by reason and dead-lettered with the original payload. See [ADR 0010](docs/adr/0010-data-contract.md).
 *   **Dead-Letter Visibility**: Contract violations, undeclared assets (under `dead_letter` policy) and validated-publish failures are routed to `platform.data.deadletter` with the original payload and the reason, and counted on `/metrics`.
-*   **Multi-Language Adapters**: Python SDK, Go SDK, or direct NATS publishing — pick the language that matches your protocol library.
+*   **Multi-Language Adapters**: Python SDK, Go SDK, or direct NATS publishing — pick the language that matches your protocol library. Reference adapters for Modbus TCP and RTU, OPC UA and MELSEC MC take their register maps from master data and follow changes to them ([ADR 0011](docs/adr/0011-point-distribution.md)).
+*   **Bulk Provisioning and Backup**: A whole plant — templates, assets, relations and every point — exports as CSVs an operator edits in a spreadsheet and imports back, with `-dry-run` first. See [Plant Bundles](docs/USER_GUIDE.md#plant-bundles).
 
 ## Quick Start
 
@@ -163,11 +164,14 @@ graph LR
 
 ## Roadmap
 
-We are evolving from a data collector to a full **Bidirectional IoT Gateway**.
+We are evolving from a data collector to a full **Bidirectional IoT Gateway**. What the gateway guarantees today, and what it costs, are measured rather than claimed: the [data contract](docs/adr/0010-data-contract.md), the [storage end-to-end test](scripts/e2e-storage.sh) and the [capacity baseline](docs/perf/capacity-baseline.md).
 
-*   **Point provisioning (partly shipped)**
+*   **Point provisioning (shipped)**
     *   The plant's tag inventory is master data: which address on a device maps to which tag name, type and unit, declared per asset and editable in one place. See [Point Provisioning](docs/USER_GUIDE.md#point-provisioning).
-    *   Distributing those lists to running adapters is not done yet; they still read a local mapping file.
+    *   Adapters take their point list from it and rebuild when it changes, and `/api/v1/adapters/drift` reports any that are running an older version ([ADR 0011](docs/adr/0011-point-distribution.md)).
+    *   A whole plant moves as a directory of CSVs an operator can edit in a spreadsheet: [Plant Bundles](docs/USER_GUIDE.md#plant-bundles).
+*   **Protocols (shipped, reference adapters)**
+    *   Modbus TCP and RTU, OPC UA, MELSEC MC — each reads its points from master data. See the [adapter guide](docs/ADAPTER_GUIDE.md). None has been run against physical hardware yet.
 *   **Basic control (not implemented)**
     *   Simple 1:1 command/response, and secure execution of device commands via adapters.
     *   Nothing of this exists in the code yet. Neither SDK can receive a command: a collector's only method is `Collect`. This entry said "Current" for a long time and was wrong.
