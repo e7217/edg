@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	// Pure Go: a cgo driver compiles to a stub under CGO_ENABLED=0, which
+	// cross-compilation turns on by itself. Three of the four v0.2.0 release
+	// binaries were that stub (#79).
+	_ "modernc.org/sqlite"
 	"strings"
 )
 
@@ -74,7 +77,7 @@ func newStore(dbPath string, opts StoreOptions) (*Store, error) {
 		return nil, fmt.Errorf("failed to create data directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", dsn(dbPath, opts))
+	db, err := sql.Open(sqliteDriver, dsn(dbPath, opts))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open DB: %w", err)
 	}
@@ -109,39 +112,41 @@ func newStore(dbPath string, opts StoreOptions) (*Store, error) {
 // cascade fired or did not depending on which connection the delete landed on.
 // Measured before this change: two of eight concurrent reads of the pragma
 // returned 0.
-// dsn builds the connection string. Every setting lives here rather than in a
-// PRAGMA statement, because a PRAGMA applies only to whichever pooled
-// connection happens to serve it.
+// sqliteDriver is the registered name of the pure-Go driver.
+const sqliteDriver = "sqlite"
+
+// dsn builds the connection string. Every setting travels here rather than in
+// a PRAGMA statement, because a PRAGMA applies only to whichever pooled
+// connection happens to serve it -- the defect that left foreign keys off on
+// most connections until #131.
+//
+// modernc.org/sqlite takes pragmas as _pragma=name(value); the cgo driver this
+// replaced used its own keys.
 func dsn(dbPath string, opts StoreOptions) string {
-	params := baseParams
+	params := append([]string(nil), baseParams...)
 	if opts.JournalMode != "" {
-		params += "&_journal_mode=" + opts.JournalMode
+		params = append(params, pragma("journal_mode", opts.JournalMode))
 	}
 	if opts.Synchronous != "" {
-		params += "&_synchronous=" + opts.Synchronous
+		params = append(params, pragma("synchronous", opts.Synchronous))
 	}
+	sep := "?"
 	if strings.Contains(dbPath, "?") {
-		return dbPath + "&" + params
+		sep = "&"
 	}
-	return dbPath + "?" + params
+	return dbPath + sep + strings.Join(params, "&")
 }
 
-// baseParams are the settings every deployment gets.
-const baseParams = "_foreign_keys=on&_busy_timeout=5000"
+// baseParams are the settings every deployment gets. _busy_timeout is here
+// because reads that span more than one statement -- a point list and its
+// points, a template and its resources -- run in a transaction, and a writer
+// that loses the race should wait for it rather than fail outright.
+var baseParams = []string{pragma("foreign_keys", "1"), pragma("busy_timeout", "5000")}
 
-func withForeignKeys(dbPath string) string {
-	// _busy_timeout is here for the same reason. Reads that span more than one
-	// statement -- a point list and its points, a template and its resources --
-	// run in a transaction so a concurrent write cannot be observed half
-	// applied. Under the default rollback journal a reader's shared lock blocks
-	// a writer, so without a timeout the loser gets `database is locked`
-	// immediately instead of waiting for a transaction that takes milliseconds.
-	params := baseParams
-	if strings.Contains(dbPath, "?") {
-		return dbPath + "&" + params
-	}
-	return dbPath + "?" + params
-}
+func pragma(name, value string) string { return "_pragma=" + name + "(" + value + ")" }
+
+// withForeignKeys is the DSN with only the settings every deployment gets.
+func withForeignKeys(dbPath string) string { return dsn(dbPath, StoreOptions{}) }
 
 func verifyStoreSchema(db *sql.DB) error {
 	var count int

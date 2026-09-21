@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/sqlite3"
+	"github.com/golang-migrate/migrate/v4/database/sqlite"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )
 
@@ -25,7 +25,7 @@ func RunMigrations(dbPath string) error {
 		}
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteDriver, withForeignKeys(dbPath))
 	if err != nil {
 		return fmt.Errorf("failed to open DB for migration: %w", err)
 	}
@@ -40,7 +40,7 @@ func RunMigrations(dbPath string) error {
 
 // RunMigrationSteps applies n migration steps. Positive n migrates up, negative n migrates down.
 func RunMigrationSteps(dbPath string, n int) error {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open(sqliteDriver, withForeignKeys(dbPath))
 	if err != nil {
 		return fmt.Errorf("failed to open DB for migration: %w", err)
 	}
@@ -79,12 +79,12 @@ func newMigrator(db *sql.DB) (*migrate.Migrate, error) {
 		return nil, fmt.Errorf("failed to load embedded migrations: %w", err)
 	}
 
-	databaseDriver, err := sqlite3.WithInstance(db, &sqlite3.Config{})
+	databaseDriver, err := sqlite.WithInstance(db, &sqlite.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create migration database driver: %w", err)
 	}
 
-	m, err := migrate.NewWithInstance("iofs", sourceDriver, "sqlite3", databaseDriver)
+	m, err := migrate.NewWithInstance("iofs", sourceDriver, "sqlite", databaseDriver)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create migrator: %w", err)
 	}

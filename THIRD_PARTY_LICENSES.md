@@ -218,7 +218,9 @@ The EDG Platform uses the following Go dependencies:
 |-----------|---------|--------|
 | github.com/nats-io/nats-server/v2 | Apache 2.0 | https://github.com/nats-io/nats-server |
 | github.com/nats-io/nats.go | Apache 2.0 | https://github.com/nats-io/nats.go |
-| github.com/mattn/go-sqlite3 | MIT | https://github.com/mattn/go-sqlite3 |
+| modernc.org/sqlite | BSD-3-Clause | https://gitlab.com/cznic/sqlite |
+| modernc.org/libc (and the other modernc.org support modules) | BSD-3-Clause | https://gitlab.com/cznic/libc |
+| github.com/golang-migrate/migrate/v4 | MIT | https://github.com/golang-migrate/migrate |
 | github.com/google/uuid | BSD-3-Clause | https://github.com/google/uuid |
 | github.com/stretchr/testify | MIT | https://github.com/stretchr/testify |
 | gopkg.in/yaml.v3 | MIT/Apache 2.0 | https://github.com/go-yaml/yaml |
