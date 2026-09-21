@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0](https://github.com/e7217/edg/compare/v0.2.0...v0.3.0) (2026-09-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** the metadata database is opened by a different SQLite driver. The file format is unchanged and an existing metadata.db is read as it is, but a deployment that pinned a build with the cgo driver should take a backup (edg-core -export-plant, or the whole data directory) before upgrading.
+
+### Bug Fixes
+
+* **core:** pure-Go SQLite driver, so cross-compiled binaries actually run ([#79](https://github.com/e7217/edg/issues/79)) ([#148](https://github.com/e7217/edg/issues/148)) ([63b2bdb](https://github.com/e7217/edg/commit/63b2bdb00c8fcb9d06981e112e3078bb4bebe4e6))
+
+
+### Performance Improvements
+
+* **core:** run SQLite in WAL mode, measured ([#130](https://github.com/e7217/edg/issues/130)) ([#147](https://github.com/e7217/edg/issues/147)) ([35f0d57](https://github.com/e7217/edg/commit/35f0d571a9fe640c3d7680b4ad7ec600889118c0))
+
 ## [0.2.0](https://github.com/e7217/edg/compare/v0.1.0...v0.2.0) (2026-09-18)
 
 
