@@ -10,6 +10,9 @@ operator expectations, or compatibility.
 - [ADR 0003: Relationship-Based Control and Conditional Triggers](0003-relationship-based-control.md)
 - [ADR 0004: Ontology Rule Engine](0004-ontology-rule-engine.md)
 - [ADR 0005: Built-in VictoriaMetrics Sink](0005-embedded-vm-sink.md)
+- ADR 0006: *Withdrawn.* A June draft on the validated-data contract, never
+  merged; its validation half became ADR 0010, and the consumer-facing half is
+  tracked in [#152](https://github.com/e7217/edg/issues/152).
 - [ADR 0007: NATS Subject Authorization](0007-nats-subject-authorization.md)
 - [ADR 0008: Adapter Runtime Status](0008-adapter-runtime-status.md)
 - [ADR 0009: Prometheus Metrics](0009-prometheus-metrics.md)
