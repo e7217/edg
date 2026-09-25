@@ -1,9 +1,11 @@
 package core
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -37,6 +39,12 @@ func NewTemplateLoaderWithStore(store *Store) (*TemplateLoader, error) {
 		return nil, err
 	}
 	return l, nil
+}
+
+// Reload re-reads every template from the store, picking up writes made
+// through another connection to the same database (a CLI import).
+func (l *TemplateLoader) Reload() error {
+	return l.reloadFromStore()
 }
 
 func (l *TemplateLoader) reloadFromStore() error {
@@ -166,6 +174,23 @@ func (l *TemplateLoader) List() []*AssetTemplate {
 		list = append(list, t)
 	}
 	return list
+}
+
+// Fingerprint identifies the cached templates' content. Two loaders holding
+// the same templates return the same value, whatever order they were written in
+// and whether a template came from a file or back from SQLite.
+func (l *TemplateLoader) Fingerprint() string {
+	templates := l.List()
+	sort.Slice(templates, func(i, j int) bool { return templates[i].Name < templates[j].Name })
+	norm := make([]AssetTemplate, len(templates))
+	for i, t := range templates {
+		norm[i] = *t
+		if len(t.Resources) == 0 {
+			norm[i].Resources = nil // `resources: []` reads back from SQLite as null
+		}
+	}
+	b, _ := json.Marshal(norm)
+	return string(b)
 }
 
 // Exists checks if a template exists

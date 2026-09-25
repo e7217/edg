@@ -174,3 +174,29 @@ func TestFileDoesNotContainCoreRoleName(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, strings.Contains(string(raw), `"core"`))
 }
+
+// Load is for a client of a running core (a CLI import notifying it): it uses
+// the secrets core already has and must never mint new ones, which would lock
+// that client out of the running server.
+func TestLoadNeverCreates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nats-credentials.json")
+	_, err := Load(path)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr), "Load must not create the file")
+
+	created, _, err := LoadOrCreate(path)
+	require.NoError(t, err)
+	loaded, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, created, loaded)
+}
+
+func TestLoadPrefersEnv(t *testing.T) {
+	t.Setenv(EnvOperatorPassword, "env-op")
+	t.Setenv(EnvAdapterPassword, "env-ad")
+	t.Setenv(EnvFanoutPassword, "env-fo")
+	creds, err := Load(filepath.Join(t.TempDir(), "absent.json"))
+	require.NoError(t, err)
+	assert.Equal(t, "env-op", creds.Operator)
+}

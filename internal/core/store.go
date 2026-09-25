@@ -3,6 +3,7 @@ package core
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -185,6 +186,20 @@ func verifyStoreSchema(db *sql.DB) error {
 }
 
 // Close closes the DB connection
+// SnapshotTo writes a consistent copy of the database to path with VACUUM
+// INTO. Unlike copying the file, the copy includes commits still in the WAL,
+// such as a running core's recent writes. path must not exist.
+func (s *Store) SnapshotTo(path string) error {
+	// VACUUM INTO accepts some existing files; never overwrite one.
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("snapshot metadata DB: %s already exists", path)
+	}
+	if _, err := s.db.Exec("VACUUM INTO ?", path); err != nil {
+		return fmt.Errorf("snapshot metadata DB to %s: %w", path, err)
+	}
+	return nil
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
 }

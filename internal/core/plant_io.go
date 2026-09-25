@@ -54,11 +54,14 @@ type PlantCounts struct {
 
 // PlantImportReport summarises an import. Problems name file and line.
 type PlantImportReport struct {
-	Templates int         `json:"templates"`
-	Assets    PlantCounts `json:"assets"`
-	Relations PlantCounts `json:"relations"`
-	Points    PlantCounts `json:"point_lists"`
-	Problems  []string    `json:"problems,omitempty"`
+	Templates int `json:"templates"`
+	// TemplatesChanged is whether any template's content changed, which the
+	// net-new count above cannot tell for an edited template.
+	TemplatesChanged bool        `json:"templates_changed"`
+	Assets           PlantCounts `json:"assets"`
+	Relations        PlantCounts `json:"relations"`
+	Points           PlantCounts `json:"point_lists"`
+	Problems         []string    `json:"problems,omitempty"`
 }
 
 // String renders the report for a terminal.
@@ -190,9 +193,11 @@ func (s *MetadataService) ImportPlant(dir string) (PlantImportReport, error) {
 	tdir := filepath.Join(dir, plantTemplatesDir)
 	if st, err := os.Stat(tdir); err == nil && st.IsDir() {
 		before := s.loader.Count()
+		fingerprint := s.loader.Fingerprint()
 		if err := s.loader.LoadFromDir(tdir); err != nil {
 			rep.Problems = append(rep.Problems, fmt.Sprintf("%s: %v", plantTemplatesDir, err))
 		}
+		rep.TemplatesChanged = s.loader.Fingerprint() != fingerprint
 		rep.Templates = s.loader.Count() - before
 		if rep.Templates < 0 {
 			rep.Templates = 0

@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -97,10 +98,44 @@ type MetaChangeEvent struct {
 
 type EventPublisher struct {
 	nc *nats.Conn
+
+	// recording, when set, keeps events in memory instead of sending them.
+	// The CLI import paths write through MetadataService like the API does,
+	// but have no core connection to publish on; they record, then tell a
+	// running core what changed (SubjectImportApplied).
+	recording *eventRecording
+}
+
+// RecordedEvent is one event a recording publisher captured.
+type RecordedEvent struct {
+	Subject string
+	Event   MetaChangeEvent
+}
+
+type eventRecording struct {
+	mu     sync.Mutex
+	events []RecordedEvent
 }
 
 func NewEventPublisher(nc *nats.Conn) *EventPublisher {
 	return &EventPublisher{nc: nc}
+}
+
+// NewRecordingEventPublisher returns a publisher that sends nothing and
+// remembers every metadata change event. Other events are dropped, as they
+// are without a connection.
+func NewRecordingEventPublisher() *EventPublisher {
+	return &EventPublisher{recording: &eventRecording{}}
+}
+
+// Recorded returns the captured metadata change events in order.
+func (p *EventPublisher) Recorded() []RecordedEvent {
+	if p == nil || p.recording == nil {
+		return nil
+	}
+	p.recording.mu.Lock()
+	defer p.recording.mu.Unlock()
+	return append([]RecordedEvent(nil), p.recording.events...)
 }
 
 func (p *EventPublisher) PublishAssetChanged(ev MetaChangeEvent) {
@@ -136,6 +171,12 @@ func (p *EventPublisher) PublishConstraintViolation(violation ConstraintViolatio
 }
 
 func (p *EventPublisher) publishMetaChange(subject string, ev MetaChangeEvent) {
+	if p != nil && p.recording != nil {
+		p.recording.mu.Lock()
+		p.recording.events = append(p.recording.events, RecordedEvent{Subject: subject, Event: ev})
+		p.recording.mu.Unlock()
+		return
+	}
 	p.publishJSON(subject, ev)
 }
 

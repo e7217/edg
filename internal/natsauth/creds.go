@@ -102,6 +102,24 @@ func LoadOrCreate(path string) (Credentials, Source, error) {
 	return create(path)
 }
 
+// Load resolves the credentials the way LoadOrCreate does but never writes a
+// file. It is for a client of a running core -- a CLI import notifying it --
+// which must use the secrets core already has: minting new ones would only
+// lock that client out. A missing file is reported as os.ErrNotExist.
+func Load(path string) (Credentials, error) {
+	creds, n, missing := fromEnv()
+	switch {
+	case n == 3:
+		return creds, nil
+	case n > 0:
+		return Credentials{}, fmt.Errorf("%w: %s must also be set", ErrIncompleteEnv, strings.Join(missing, ", "))
+	}
+	if path == "" {
+		return Credentials{}, fmt.Errorf("natsauth: empty credentials path")
+	}
+	return readFile(path)
+}
+
 // InsecureMode reports whether an existing credentials file is readable beyond
 // its owner. Callers warn instead of failing: refusing to boot over a file mode
 // would be a worse outage than the exposure it prevents.

@@ -29,10 +29,14 @@ const pointFileSuffix = ".yaml"
 // It reports every file that failed rather than stopping at the first, because
 // an operator importing a plant wants the whole list of problems in one pass,
 // not one per run.
-func (s *MetadataService) ImportPointLists(dir string) (imported int, err error) {
+//
+// A file declaring exactly what the stored list already declares is counted as
+// unchanged and not written, so its version does not advance and adapters
+// provisioned from it are not rebuilt.
+func (s *MetadataService) ImportPointLists(dir string) (imported, unchanged int, err error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read point directory: %w", err)
+		return 0, 0, fmt.Errorf("failed to read point directory: %w", err)
 	}
 
 	var problems []string
@@ -46,6 +50,15 @@ func (s *MetadataService) ImportPointLists(dir string) (imported int, err error)
 			problems = append(problems, fmt.Sprintf("%s: %v", e.Name(), err))
 			continue
 		}
+		have, err := s.store.GetPointList(req.AssetID)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", e.Name(), err))
+			continue
+		}
+		if have != nil && samePointList(have, req) {
+			unchanged++
+			continue
+		}
 		if _, err := s.UpsertPointList(*req); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", e.Name(), err))
 			continue
@@ -54,10 +67,10 @@ func (s *MetadataService) ImportPointLists(dir string) (imported int, err error)
 	}
 
 	if len(problems) > 0 {
-		return imported, fmt.Errorf("%d of %d point files rejected:\n  %s",
-			len(problems), len(problems)+imported, strings.Join(problems, "\n  "))
+		return imported, unchanged, fmt.Errorf("%d of %d point files rejected:\n  %s",
+			len(problems), len(problems)+imported+unchanged, strings.Join(problems, "\n  "))
 	}
-	return imported, nil
+	return imported, unchanged, nil
 }
 
 // readPointFile parses one file. The filename is the asset id unless the file

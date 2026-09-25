@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -309,6 +308,7 @@ func main() {
 	metaHandler := core.NewMetaHandlerWithOptions(store, loader, core.MetaHandlerOptions{
 		Events:                eventPublisher,
 		ConstraintEnforcement: cfg.Constraints.Enforcement,
+		Contract:              contract,
 	})
 	metaService := core.NewMetadataService(store, loader, eventPublisher, cfg.Constraints.Enforcement)
 	alarmHandler := core.NewAlarmHandler(store, eventPublisher, core.AlarmHandlerOptions{
@@ -466,7 +466,8 @@ func checkConstraints(cfg core.CoreConfig) (core.ConstraintsReport, error) {
 
 // pointService opens the metadata store and builds the service the point-list
 // CLI paths write through, so file import obeys the same validation as the API.
-func pointService(cfg core.CoreConfig) (*core.MetadataService, func(), error) {
+// events is nil for read-only paths; an import passes a recording publisher.
+func pointService(cfg core.CoreConfig, events *core.EventPublisher) (*core.MetadataService, func(), error) {
 	store, err := core.NewStoreWithOptions(cfg.Storage.MetadataDB, core.StoreOptionsFrom(cfg.Storage))
 	if err != nil {
 		return nil, nil, err
@@ -476,26 +477,29 @@ func pointService(cfg core.CoreConfig) (*core.MetadataService, func(), error) {
 		store.Close()
 		return nil, nil, err
 	}
-	svc := core.NewMetadataService(store, loader, nil, cfg.Constraints.Enforcement)
+	svc := core.NewMetadataService(store, loader, events, cfg.Constraints.Enforcement)
 	return svc, func() { store.Close() }, nil
 }
 
 func runImportPoints(cfg core.CoreConfig, dir string) error {
-	svc, close, err := pointService(cfg)
+	rec := core.NewRecordingEventPublisher()
+	svc, close, err := pointService(cfg, rec)
 	if err != nil {
 		return err
 	}
 	defer close()
 
-	n, err := svc.ImportPointLists(dir)
-	// n is reported even on error: a partial import has already happened and the
-	// operator needs to know how far it got.
-	log.Printf("[Core] Imported %d point list(s) from %s", n, dir)
+	n, unchanged, err := svc.ImportPointLists(dir)
+	// Counts are reported even on error: a partial import has already happened
+	// and the operator needs to know how far it got -- and a running core
+	// needs to hear about it.
+	log.Printf("[Core] Imported %d point list(s) from %s (%d unchanged)", n, dir, unchanged)
+	notifyRunningCore(cfg, "cli:import-points", rec, false)
 	return err
 }
 
 func runExportPoints(cfg core.CoreConfig, dir string) error {
-	svc, close, err := pointService(cfg)
+	svc, close, err := pointService(cfg, nil)
 	if err != nil {
 		return err
 	}
@@ -510,7 +514,7 @@ func runExportPoints(cfg core.CoreConfig, dir string) error {
 }
 
 func runExportPlant(cfg core.CoreConfig, dir string) error {
-	svc, close, err := pointService(cfg)
+	svc, close, err := pointService(cfg, nil)
 	if err != nil {
 		return err
 	}
@@ -526,10 +530,12 @@ func runExportPlant(cfg core.CoreConfig, dir string) error {
 // (for the exit status) when any row was rejected, after applying every row
 // that was not.
 //
-// With dryRun the import runs against a copy of the metadata DB that is then
-// thrown away, so the report is exactly what a real import would do -- the
-// same validation, constraint checks and conflicts -- without a second
-// implementation of any of them.
+// With dryRun the import runs against a snapshot of the metadata DB that is
+// then thrown away, so the report is exactly what a real import would do --
+// the same validation, constraint checks and conflicts -- without a second
+// implementation of any of them. A dry run tells no running core anything.
+//
+// A real import tells a running core what it wrote (#150).
 func runImportPlant(cfg core.CoreConfig, dir string, dryRun bool) (failed bool, err error) {
 	if dryRun {
 		tmp, err := os.MkdirTemp("", "edg-dry-run-")
@@ -537,14 +543,15 @@ func runImportPlant(cfg core.CoreConfig, dir string, dryRun bool) (failed bool, 
 			return false, err
 		}
 		defer os.RemoveAll(tmp)
-		copyPath := filepath.Join(tmp, "metadata.db")
-		if err := copyFile(cfg.Storage.MetadataDB, copyPath); err != nil && !os.IsNotExist(err) {
-			return false, fmt.Errorf("copy metadata DB for dry run: %w", err)
+		snapshot := filepath.Join(tmp, "metadata.db")
+		if err := snapshotMetadataDB(cfg, snapshot); err != nil {
+			return false, err
 		}
-		cfg.Storage.MetadataDB = copyPath
+		cfg.Storage.MetadataDB = snapshot
 	}
 
-	svc, close, err := pointService(cfg)
+	rec := core.NewRecordingEventPublisher()
+	svc, close, err := pointService(cfg, rec)
 	if err != nil {
 		return false, err
 	}
@@ -554,33 +561,30 @@ func runImportPlant(cfg core.CoreConfig, dir string, dryRun bool) (failed bool, 
 		fmt.Println("DRY RUN -- nothing was written. A real import would do:")
 	}
 	fmt.Print(rep.String())
+	if !dryRun {
+		// Before the error check: rows applied ahead of a failure are in the
+		// database, and a running core should hear about them.
+		notifyRunningCore(cfg, "cli:import-plant", rec, rep.TemplatesChanged)
+	}
 	if err != nil {
 		return true, err
-	}
-	if !dryRun && (rep.Assets.Created+rep.Assets.Updated+rep.Relations.Created+rep.Points.Created+rep.Points.Updated > 0) {
-		fmt.Println("A running edg-core does not see these writes as events: restart it, or adapters " +
-			"provisioned from these point lists pick them up at their next reconcile (5 min).")
 	}
 	return len(rep.Problems) > 0, nil
 }
 
-// copyFile copies an SQLite database file. It is only used for a dry run, on
-// the file as it is at this instant; a WAL or journal beside it is not copied.
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+// snapshotMetadataDB writes a consistent copy of the metadata DB for a dry
+// run, including commits a running core has not yet checkpointed out of the
+// WAL. With no database yet, the dry run starts from an empty one.
+func snapshotMetadataDB(cfg core.CoreConfig, dst string) error {
+	if _, err := os.Stat(cfg.Storage.MetadataDB); os.IsNotExist(err) {
+		return nil
+	}
+	store, err := core.NewStoreWithOptions(cfg.Storage.MetadataDB, core.StoreOptionsFrom(cfg.Storage))
 	if err != nil {
 		return err
 	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
+	defer store.Close()
+	return store.SnapshotTo(dst)
 }
 
 func runImportTemplates(cfg core.CoreConfig, dir string) error {
@@ -594,11 +598,14 @@ func runImportTemplates(cfg core.CoreConfig, dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := loader.LoadFromDir(dir); err != nil {
-		return err
-	}
+	fingerprint := loader.Fingerprint()
+	err = loader.LoadFromDir(dir)
+	changed := loader.Fingerprint() != fingerprint
 	log.Printf("[Core] Imported templates from %s (%d total)", dir, loader.Count())
-	return nil
+	if changed {
+		notifyRunningCore(cfg, "cli:import-templates", nil, true)
+	}
+	return err
 }
 
 func runExportTemplates(cfg core.CoreConfig, dir string) error {

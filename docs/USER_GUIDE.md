@@ -238,12 +238,15 @@ the mode. Anything still publishing to a forbidden subject shows up in the core
 log as `Publish Violation - Subject "..."`, which is the checklist for clients
 that do not use an EDG SDK.
 
-Manage templates as files without running the server:
+Manage templates as files:
 
 ```bash
 edg-core --import-templates ./templates   # YAML files -> SQLite (upsert)
 edg-core --export-templates ./out          # SQLite -> one YAML per template
 ```
+
+The import works whether or not the server is running; a running one is told to
+reload its templates (see [Imports and a running core](#imports-and-a-running-core)).
 
 **JetStream reliability defaults:**
 ```yaml
@@ -604,9 +607,12 @@ provisioned.
 - **A write replaces the list wholesale.** That is the operation an operator
   performs — *here is the list* — and a partial apply is what leaves a plant
   half-provisioned. A point absent from the new list is removed.
-- **`version` advances on every write**, including one that changes nothing. It
-  is the signal adapters will compare against once distribution lands, and a
-  missed bump is worse than a redundant one.
+- **`version` advances on every API write**, including one that changes
+  nothing: it is the signal adapters compare against, and a missed bump is worse
+  than a redundant one. File imports (`-import-points`, `-import-plant`) are the
+  exception — a list that declares exactly what is stored is reported
+  `unchanged` and not rewritten, so re-importing a spreadsheet does not rebuild
+  every adapter.
 - **`created_at` is preserved per point** across a re-import, so after bulk
   re-importing a spreadsheet you can still see which declarations are new.
 - **Adapters can poll these lists directly** ([ADR 0011](adr/0011-point-distribution.md)).
@@ -662,12 +668,42 @@ edg-core -import-plant ./plant             # apply it
 - **Every problem, in one pass.** Each rejected row is reported with its file
   and line; every other row is applied. The exit status is 1 if any row was
   rejected.
-- **`-dry-run` is exact.** It runs the real import against a copy of the
-  metadata database and throws the copy away, so it reports the same conflicts
-  and validation errors a real run would.
-- **A running core does not see a CLI import as events.** Restart it afterwards;
-  provisioned adapters also pick up changed point lists at their next
-  reconcile (5 minutes).
+- **`-dry-run` is exact.** It runs the real import against a snapshot of the
+  metadata database and throws the snapshot away, so it reports the same
+  conflicts and validation errors a real run would. The snapshot includes what a
+  running core has just written.
+
+### Imports and a running core
+
+`-import-plant`, `-import-points` and `-import-templates` write the database
+directly, so they work with the server stopped. When it is running, the import
+then tells it what changed, and the core:
+
+- reloads its template cache and refreshes the data contract's declarations, so
+  a newly declared tag is accepted at once;
+- announces every changed asset, relation and point list on
+  `platform.meta.*.changed`, so provisioned adapters rebuild within a second
+  instead of at their next reconcile.
+
+```
+Running edg-core updated: 12 change event(s) announced, templates reloaded.
+```
+
+The import connects to `nats.host`:`nats.port` on this machine (a wildcard bind
+address is dialled as `127.0.0.1`) as the `operator` role, resolving the password
+the way the core does: the three `EDG_NATS_*_PASSWORD` variables if set,
+otherwise the credentials file. It never creates that file. Only `operator` may send this notification
+(`platform.meta.import.applied`, [ADR 0012](adr/0012-import-notification.md)).
+
+If the core cannot be reached — it is stopped, it is an older version, or the
+credentials cannot be read — the import still succeeds and says so:
+
+```
+Could not tell a running edg-core about these changes (nats: no servers available for connection).
+If edg-core is running, restart it; adapters provisioned from changed point lists also pick them up at their next reconcile (5 min).
+```
+
+A `-dry-run` never notifies.
 
 ## Asset Relations
 

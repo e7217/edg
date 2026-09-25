@@ -225,9 +225,9 @@ func (c *ContractChecker) Flush() {
 
 // Start subscribes to the master-data change events that can alter a profile.
 //
-// Templates are not among them: they change only through -import-templates,
-// which the running core does not observe either way (the TemplateLoader has
-// the same limit), so a template import takes effect on restart.
+// Templates are not among them: they change only through a CLI import, which
+// flushes this cache directly when it tells core it changed them
+// (SubjectImportApplied).
 func (c *ContractChecker) Start(nc *nats.Conn) error {
 	if c == nil || nc == nil {
 		return nil

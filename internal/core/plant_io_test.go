@@ -52,6 +52,7 @@ func TestImportPlant(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, rep.Problems)
 	assert.Equal(t, 2, rep.Templates)
+	assert.True(t, rep.TemplatesChanged)
 	assert.Equal(t, PlantCounts{Created: 3}, rep.Assets)
 	assert.Equal(t, PlantCounts{Created: 2}, rep.Relations)
 	assert.Equal(t, PlantCounts{Created: 2}, rep.Points)
@@ -94,6 +95,7 @@ func TestImportPlantIsIdempotent(t *testing.T) {
 
 	rep, err := svc.ImportPlant(dir)
 	require.NoError(t, err)
+	assert.False(t, rep.TemplatesChanged)
 	assert.Equal(t, PlantCounts{Unchanged: 3}, rep.Assets)
 	assert.Equal(t, PlantCounts{Unchanged: 2}, rep.Relations)
 	assert.Equal(t, PlantCounts{Unchanged: 2}, rep.Points)
