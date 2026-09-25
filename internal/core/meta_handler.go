@@ -36,11 +36,16 @@ type MetaHandler struct {
 	loader      *TemplateLoader
 	constraints *ConstraintsEvaluator
 	service     *MetadataService
+	events      *EventPublisher
+	contract    *ContractChecker
 }
 
 type MetaHandlerOptions struct {
 	Events                *EventPublisher
 	ConstraintEnforcement string
+	// Contract is flushed when a CLI import reports changed templates, which
+	// no change event covers (SubjectImportApplied).
+	Contract *ContractChecker
 }
 
 // NewMetaHandler creates a new handler
@@ -65,6 +70,8 @@ func NewMetaHandlerWithOptions(store *Store, loader *TemplateLoader, opts MetaHa
 		loader:      loader,
 		constraints: NewConstraintsEvaluator(loader),
 		service:     NewMetadataService(store, loader, opts.Events, enforcement),
+		events:      opts.Events,
+		contract:    opts.Contract,
 	}
 }
 
@@ -94,6 +101,7 @@ func (h *MetaHandler) handlers() map[string]nats.MsgHandler {
 		SubjectTemplateList:     h.handleTemplateList,
 		SubjectConstraintsCheck: h.handleConstraintsCheck,
 		SubjectPointsGet:        h.handlePointsGet,
+		SubjectImportApplied:    h.handleImportApplied,
 
 		// Relation handlers
 		SubjectRelationCreate: h.handleRelationCreate,

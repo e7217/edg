@@ -131,3 +131,41 @@ func TestValidateAssetData_InvalidType(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must be NUMBER type")
 }
+
+// Fingerprint changes exactly when a template's content does, so an import
+// can tell a running core to reload only when there is something to reload.
+func TestTemplateLoaderFingerprint(t *testing.T) {
+	l := NewTemplateLoader()
+	empty := l.Fingerprint()
+	require.NoError(t, l.Upsert(&AssetTemplate{Name: "pump", Resources: []AssetResource{{Name: "t", ValueType: ValueTypeNumber}}}))
+	one := l.Fingerprint()
+	assert.NotEqual(t, empty, one)
+
+	require.NoError(t, l.Upsert(&AssetTemplate{Name: "pump", Resources: []AssetResource{{Name: "t", ValueType: ValueTypeNumber}}}))
+	assert.Equal(t, one, l.Fingerprint(), "rewriting the same template is no change")
+
+	require.NoError(t, l.Upsert(&AssetTemplate{Name: "pump", Resources: []AssetResource{{Name: "t", ValueType: ValueTypeNumber, Unit: "°C"}}}))
+	assert.NotEqual(t, one, l.Fingerprint())
+}
+
+// A template read back from SQLite and the same file parsed again must agree,
+// or every re-import would claim a template change and reload a running core.
+func TestTemplateFingerprintSurvivesTheStore(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "m.db")
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "valve.yaml"), []byte("name: valve\nresources: []\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pump.yaml"), []byte("name: pump\nresources:\n  - name: t\n    valueType: NUMBER\n    unit: \"°C\"\n"), 0o644))
+
+	store, err := NewStore(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	first, err := NewTemplateLoaderWithStore(store)
+	require.NoError(t, err)
+	require.NoError(t, first.LoadFromDir(dir))
+
+	again, err := NewTemplateLoaderWithStore(store) // a later CLI run
+	require.NoError(t, err)
+	before := again.Fingerprint()
+	require.NoError(t, again.LoadFromDir(dir))
+	assert.Equal(t, before, again.Fingerprint())
+}

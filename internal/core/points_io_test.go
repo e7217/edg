@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,9 +34,10 @@ points:
     enabled: true
 `), 0o644))
 
-	n, err := svc.ImportPointLists(dir)
+	n, unchanged, err := svc.ImportPointLists(dir)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
+	assert.Equal(t, 0, unchanged)
 
 	pl, err := svc.GetPointList("pump-a")
 	require.NoError(t, err)
@@ -71,25 +71,17 @@ points:
 	assert.NotContains(t, string(data), "created_at")
 	assert.NotContains(t, string(data), "updated_at")
 
-	n, err = svc.ImportPointLists(out)
+	// Re-importing what was exported declares nothing new, so nothing is
+	// written: a version bump would rebuild every adapter provisioned from
+	// the list for no change (#150).
+	n, unchanged, err = svc.ImportPointLists(out)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n)
+	assert.Equal(t, 0, n)
+	assert.Equal(t, 1, unchanged)
 	after, err := svc.GetPointList("pump-a")
 	require.NoError(t, err)
-	// updated_at is refreshed by the re-import itself, at one-second
-	// resolution, so comparing it made this test fail whenever the import
-	// straddled a second. created_at must survive; that is the property.
-	assert.Equal(t, withoutUpdatedAt(pl.Points), withoutUpdatedAt(after.Points),
-		"a round trip changes nothing but the version and updated_at")
-	assert.Equal(t, pl.Version+1, after.Version)
-}
-
-func withoutUpdatedAt(points []Point) []Point {
-	out := append([]Point(nil), points...)
-	for i := range out {
-		out[i].UpdatedAt = time.Time{}
-	}
-	return out
+	assert.Equal(t, pl.Points, after.Points, "a round trip changes nothing")
+	assert.Equal(t, pl.Version, after.Version)
 }
 
 // Import must report every bad file, not stop at the first: an operator
@@ -107,7 +99,7 @@ func TestImportPointListsReportsEveryProblem(t *testing.T) {
 	write("broken.yaml", "protocol: [this is not a string\n")
 	write("notes.txt", "ignored")
 
-	n, err := svc.ImportPointLists(dir)
+	n, _, err := svc.ImportPointLists(dir)
 	require.Error(t, err)
 	assert.Equal(t, 1, n, "the one good file still imported")
 	msg := err.Error()
@@ -131,7 +123,7 @@ func TestImportPointListsRejectsAssetIDMismatch(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "pump-a.yaml"),
 		[]byte("asset_id: pump-b\nprotocol: modbus-tcp\npoints: []\n"), 0o644))
 
-	_, err := svc.ImportPointLists(dir)
+	_, _, err := svc.ImportPointLists(dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not match the filename")
 
@@ -163,7 +155,7 @@ func TestExportPointListsRefusesUnsafeAssetID(t *testing.T) {
 
 func TestImportPointListsMissingDirectory(t *testing.T) {
 	svc, _ := newPointsTestService(t)
-	_, err := svc.ImportPointLists(filepath.Join(t.TempDir(), "nope"))
+	_, _, err := svc.ImportPointLists(filepath.Join(t.TempDir(), "nope"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to read point directory")
 }

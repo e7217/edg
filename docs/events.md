@@ -48,8 +48,19 @@ Fields:
 - `entity_id`: asset ID or relation ID.
 - `source`: system that caused the change. Use `manual`, `auto`, or a stable adapter name.
 - `timestamp`: publish timestamp from EDG Core.
-- `before`: previous full object snapshot. Omitted for creates.
+- `before`: previous full object snapshot. Omitted for creates, and for every
+  event announcing a file import (below).
 - `after`: new full object snapshot. Omitted for deletes.
+
+### Events from a file import
+
+A CLI import (`-import-plant`, `-import-points`, `-import-templates`) writes the
+database directly and then tells a running core which entities changed
+([ADR 0012](adr/0012-import-notification.md)). The core reads each one back and
+announces it with `after` set to what is stored and **no `before`**; `source` is
+`cli:import-plant` or `cli:import-points` (asset events keep the asset's own
+`source`, as always). An entity that no longer exists by then is announced as
+`deleted`. Only entities the import actually changed are announced.
 
 ## Subscribe
 

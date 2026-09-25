@@ -18,6 +18,7 @@ operator expectations, or compatibility.
 - [ADR 0009: Prometheus Metrics](0009-prometheus-metrics.md)
 - [ADR 0010: The Data Contract of `platform.data.validated`](0010-data-contract.md)
 - [ADR 0011: Point Distribution to Adapters](0011-point-distribution.md)
+- [ADR 0012: Telling a Running Core What an Import Wrote](0012-import-notification.md)
 
 ## Format
 

@@ -83,6 +83,9 @@ var (
 		"platform.meta.asset.delete",
 		"platform.meta.relation.create",
 		"platform.meta.relation.delete",
+		// A CLI import tells core what it wrote, so core can announce it
+		// (#150). Operator-only like the writes themselves.
+		"platform.meta.import.applied",
 	}
 
 	// adapterStatusPublish is the adapter runtime-status plane (ADR 0008).
