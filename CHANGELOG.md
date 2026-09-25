@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2](https://github.com/e7217/edg/compare/v0.3.1...v0.3.2) (2026-09-25)
+
+
+### Features
+
+* **core:** tell a running core what a CLI import wrote ([#150](https://github.com/e7217/edg/issues/150)) ([#157](https://github.com/e7217/edg/issues/157)) ([cdee85b](https://github.com/e7217/edg/commit/cdee85bf6e78d4a59f6c0f43ee9db416a93ae25a))
+
 ## [0.3.1](https://github.com/e7217/edg/compare/v0.3.0...v0.3.1) (2026-09-24)
 
 
